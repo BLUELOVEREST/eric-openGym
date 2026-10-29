@@ -15,19 +15,19 @@ Node ESM/node:test on openGym. Existing frontend and native app frameworks retai
 
 ## Milestone 1: Wire Protocol Foundation (current batch)
 
-- [ ] Write synthetic cross-repository protocol tests before implementations.
+- [x] Write synthetic cross-repository protocol tests before implementations.
   SparkyFitness: `SparkyFitnessServer/tests/sparkyGymProtocol.test.ts`.
   openGym: `api/test/sparkygym-protocol.test.js`.
-- [ ] Confirm tests fail on missing implementations, not infrastructure problems.
-- [ ] Add `shared/src/schemas/api/SparkyGym.api.zod.ts` and root exports for the strict
+- [x] Confirm tests fail on missing implementations, not infrastructure problems.
+- [x] Add `shared/src/schemas/api/SparkyGym.api.zod.ts` and root exports for the strict
   event envelope, ownership direction and durable receipt contracts.
-- [ ] Add `SparkyFitnessServer/integrations/opengym/protocol.ts` for request-byte
+- [x] Add `SparkyFitnessServer/integrations/opengym/protocol.ts` for request-byte
   signing and verification. openGym independently implements the same public wire
   contract in `api/integrations/sparkygym-protocol.js` without package dependencies.
-- [ ] Cover UTF-8 body bytes, body tampering, path binding, wrong key, key ID syntax,
+- [x] Cover UTF-8 body bytes, body tampering, path binding, wrong key, key ID syntax,
   stale/future timestamps, exact skew boundary, missing/invalid headers, size bounds,
   invalid dates/revisions, wrong producer direction, delete semantics and unknown fields.
-- [ ] Run both focused test suites and a shared golden-vector parity check. Run
+- [x] Run both focused test suites and a shared golden-vector parity check. Run
   shared/server validation and report any baseline errors; no route registered yet.
 
 Commands:
@@ -52,6 +52,8 @@ migration, RLS policies and matching shared database/API schemas. Update databas
 security tiers and family-sharing docs; leave db_schema_backup.sql to CI.
 openGym files: focused connection module beside server.js, private state metadata
 module over durable.js, migration of profile documents without changing public state.
+Extend `api/Dockerfile` to include the integration modules when routes start importing
+them; add a build-context regression so source-only success cannot hide missing files.
 
 - [ ] Test expiring one-use pairing, both-owner approval, no delegated binding,
   credential encryption, directional keys, rotation, revocation and private-LAN opt-in.
