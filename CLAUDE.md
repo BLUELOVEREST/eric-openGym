@@ -23,7 +23,7 @@ api/        Backend: server.js (plain node:http) plus small testable modules bes
 web/        Multi-stage Dockerfile (builds frontend, adds catalogue/media, serves with nginx) and
             nginx.conf.template (serves the app, proxies /api).
 catalogue/  The exercise database: exercises/<id>.json, i18n/, licensed 180 px media/.
-mcp/        Optional stdio MCP server: reads DATA_DIR, and its one write tool (log_workout)
+mcp/        Optional stdio MCP server: reads native SQL state in DATA_DIR, and its one write tool (log_workout)
             saves through the api. Not in the Docker build.
 scripts/    Build, CI and release helpers (scripts/README.md).
 website/    opengym.ch, plain HTML/CSS/JS, deployed separately.
@@ -115,9 +115,11 @@ machine, never in CI (see "Exercise media" below and docs/APP_STORES.md).
 
 Plain `node:http`, no framework. Requests are dispatched through a `routes` object keyed by
 `'METHOD /path'` (e.g. `routes['GET /api/health']`); add an endpoint by adding a key and its entry
-in `openapi.yaml` (`openapi-routes.test.js` compares them). State is JSON under `DATA_DIR`:
-`db.json` (users, credentials, push subscriptions, invites) and `state-<uid>.json` per user,
-written temp-then-rename (`durable.js`). Custom-exercise photos and videos live in
+in `openapi.yaml` (`openapi-routes.test.js` compares them). `DATA_DIR/db.json` stores
+users, credentials, push subscriptions and invites using durable temp-then-rename.
+`DATA_DIR/profiles.sqlite` is the sole live profile source, with transactional native
+CAS and separate integration tables (`api/storage/`). Startup performs a backed-up
+one-time JSON migration; no file fallback or dual-write. Custom-exercise media live in
 `DATA_DIR/uploads` (`media.js`). Auth is WebAuthn passkeys (`@simplewebauthn/server`), an optional
 password, and a signed session cookie (HMAC with `DATA_DIR/secret`); paired phones get the same
 session as a bearer token. Optional pieces are gated by env vars: `ADMIN_UIDS`, `INVITE_ONLY`,
@@ -141,8 +143,9 @@ together: `lib/sync-merge.js` and `api/sync-stamps.js` (parity test), `lib/glyph
 
 ### MCP server (`mcp/src`)
 
-Stdio MCP bridge (`@modelcontextprotocol/sdk`) that reads one user's data straight from
-`DATA_DIR`. `state.js` loads and derives the data, `tools.js` defines the read tools (zod schemas),
+Stdio MCP bridge (`@modelcontextprotocol/sdk`) that reads one user's data from the native
+read-only SQLite reader in `api/storage/profile-reader.js`. It requires the monorepo
+layout. `state.js` caches by SQL revision and derives data; `tools.js` defines read tools (zod schemas),
 `labels.js` maps keys to readable labels, `index.js` wires it together. The one write tool,
 `log_workout` (`write-tools.js`), never writes the file: it builds the workout with
 `frontend/src/lib/log-workout.js` and saves it with `PUT /api/data` over a paired-session token

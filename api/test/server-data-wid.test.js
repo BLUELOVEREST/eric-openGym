@@ -11,6 +11,8 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { boundPort } from './helpers.mjs';
+import { readProfile } from './profile-fixture.mjs';
+import { DatabaseSync } from 'node:sqlite';
 
 // ---- the real server -------------------------------------------------------------------------
 const API = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -31,17 +33,20 @@ test('PUT /api/data: write ids, their ancestry, and a stale write id refused at 
   const base = `http://127.0.0.1:${await boundPort(child, () => log)}`;
   const headers = { Cookie: `gymsid=${mintSession('u1')}`, 'Content-Type': 'application/json' };
   const put = async body => { const r = await fetch(`${base}/api/data`, { method: 'PUT', headers, body: JSON.stringify(body) }); return { status: r.status, body: await r.json() }; };
-  const file = path.join(dataDir, 'state-u1.json');
 
   const a = await put({ state: { _ts: 1, workouts: [], routines: [] }, baseRev: 0 });
   assert.equal(a.status, 200);
-  const backup = fs.readFileSync(file, 'utf8');   // the nightly backup, at rev 1
+  const backup = readProfile(dataDir, 'u1');   // the nightly backup, at rev 1
   const b = await put({ state: { _ts: 2, workouts: [{ id: 'LegDay', d: '2026-10-01' }], routines: [] }, baseRev: 1, baseWid: a.body.wid });
   assert.equal(b.status, 200);
   assert.notEqual(b.body.wid, a.body.wid);
-  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8'))._wids, [a.body.wid]);
+  assert.deepEqual(readProfile(dataDir, 'u1')._wids, [a.body.wid]);
   // restored, and another device writes rev 2 again
-  fs.writeFileSync(file, backup);
+  // A restored database rewinds both the profile JSON and its SQL revision. A normal
+  // commitProfile call intentionally cannot model that rollback: it increments revision.
+  const db = new DatabaseSync(path.join(dataDir, 'profiles.sqlite'));
+  try { db.prepare('UPDATE profiles SET revision=?, state=? WHERE owner_id=?').run(backup._rev, JSON.stringify(backup), 'u1'); }
+  finally { db.close(); }
   const other = await put({ state: { _ts: 3, workouts: [{ id: 'B', d: '2026-10-02' }], routines: [] }, baseRev: 1, baseWid: a.body.wid });
   assert.equal(other.status, 200);
   assert.equal(other.body.rev, 2);

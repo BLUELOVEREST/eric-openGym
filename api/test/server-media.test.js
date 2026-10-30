@@ -1,3 +1,5 @@
+import { readProfile, writeProfile, deleteProfile } from './profile-fixture.mjs';
+import { DatabaseSync } from 'node:sqlite';
 /* The media routes on a real server.js in a child process: sessions, CSRF, CORS, the throttle,
    the headers a stored file is served with, the config block, the PUT /api/data hook, admin
    delete, and what is left on disk after each refusal. Caps are lowered through the MEDIA_*
@@ -352,17 +354,33 @@ test('a state push starts the grace of a dropped file, and /sweep removes it at 
   assert.match(audit, /"ev":"media\.sweep"/);
 });
 
-test('/sweep with a state that does not parse removes nothing', async t => {
+test('/sweep with damaged application state removes nothing', async t => {
   const h = await start(t);
   const a = M.jpeg();
   await h.put(a, { uid: U2 });
-  fs.writeFileSync(path.join(h.dataDir, `state-${U2}.json`), '{"customEx": [tor');
+  writeProfile(h.dataDir, U2, { customEx: [], workouts: [], routines: [] });
+  // Valid JSON, but not an application profile. Bypass the fixture's shape validation to
+  // simulate damaged stored data without corrupting SQLite pages used by the live server.
+  const db = new DatabaseSync(path.join(h.dataDir, 'profiles.sqlite'));
+  try { db.prepare('UPDATE profiles SET state=?, revision=revision+1 WHERE owner_id=?').run('null', U2); }
+  finally { db.close(); }
+  assert.equal((await fetch(`${h.api}/api/data`, { headers: cookie(U2) })).status, 503,
+    'strict reads must not turn damaged SQL state into an empty profile');
+  const overwrite = await fetch(`${h.api}/api/data`, { method: 'PUT',
+    headers: { ...cookie(U2), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ state: { workouts: [], routines: [] } }) });
+  assert.equal(overwrite.status, 503, 'damaged state cannot be silently replaced');
+  const check = new DatabaseSync(path.join(h.dataDir, 'profiles.sqlite'));
+  try {
+    assert.equal(check.prepare('SELECT state FROM profiles WHERE owner_id=?').get(U2).state, 'null',
+      'the original damaged state is preserved');
+  } finally { check.close(); }
   const r = await h.post('/api/media/sweep', {}, U2);
   assert.equal(r.status, 200);
   assert.equal((await r.json()).removed, 0);
   assert.deepEqual(h.files(U2), [`${M.sha(a)}.jpg`]);
-  // And with no state file at all.
-  fs.unlinkSync(path.join(h.dataDir, `state-${U2}.json`));
+  // And with no profile at all.
+  deleteProfile(h.dataDir, U2);
   assert.equal((await (await h.post('/api/media/sweep', {}, U2)).json()).removed, 0);
   assert.deepEqual(h.files(U2), [`${M.sha(a)}.jpg`]);
 });
@@ -389,7 +407,7 @@ test('PUT /api/data still answers 200 when the media bookkeeping fails', async t
   // busy machine the reply can be read first.
   for (let i = 0; i < 100 && !/media noteState/.test(h.log); i++) await new Promise(res => setTimeout(res, 20));
   assert.match(h.log, /media noteState/);
-  const saved = JSON.parse(fs.readFileSync(path.join(h.dataDir, `state-${U1}.json`), 'utf8'));
+  const saved = readProfile(h.dataDir, U1);
   assert.equal(saved._rev, 1, 'the state itself was saved');
 });
 

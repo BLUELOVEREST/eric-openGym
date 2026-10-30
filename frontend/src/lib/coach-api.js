@@ -11,6 +11,7 @@ import { DEMO } from './demo.js'
 import { MOBILE } from './mobile.js'
 import { t, tn, getLang } from './i18n.js'
 import { useStore } from '../store/useStore.js'
+import { readBodyState } from './sparkygym-client.js'
 import { todayForCoach } from './coach-context.js'
 import { useUI } from '../store/useUI.js'
 
@@ -23,7 +24,7 @@ const IDLE_MS = 60000       // a Coach screen is open but nothing is running
 // is imported dynamically so none of it lands in a self-hosted bundle.
 let demoMod = null
 const demo = async () => (demoMod = demoMod || await import('./coach-demo.js'))
-const S = () => useStore.getState().S
+const S = () => readBodyState(useStore.getState().S)
 // Each request says which language the app is in: a profile that never picked one has no stored
 // `lang` worth trusting — it is worked out per device (#303, lib/default-lang.js) — and the
 // Coach should answer in what the person is reading.

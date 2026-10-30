@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+vi.mock('../lib/sparkygym-client.js', () => import('../test-fixtures/local-body-client.js'))
 
 /* Structural Balance's per-role exercise choices (S.balanceOverrides) through the store's own
    sync paths. Each choice carries the time it was made, and "Use default exercise" is a stamped

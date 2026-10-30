@@ -30,6 +30,9 @@ import { DEFAULT_TEMPLATE_ID } from '../lib/structuralBalanceTemplates.js'
 import { WC_DEFAULT } from '../lib/workout-controls.js'
 import { sanitizeAccent } from '../lib/accent.js'
 import { registerExerciseAliases } from '../lib/exercise-aliases.js'
+import { setBodyOwner, currentBody, refreshBody, useSparkyGym } from '../lib/sparkygym-client.js'
+import { bodyWriteState, MANAGED_BODY_FIELDS } from '../lib/sparkygym-body.js'
+import { identifyNewWorkoutRows } from '../lib/workout-ids.js'
 
 const KEY = 'gym_state_v1'
 // Where the saved copy stands with the server: the revision it descends from, and its own `_ts`
@@ -620,6 +623,12 @@ export const useStore = create((set, get) => {
     const { base, owed } = metaOf()   // the copy being replaced; the new one stands where it stood
     const joined = joinSaved(S, get()?.S)
     if (joined) S = joined
+    // Every writer (imports, reset, AI and watch included) respects the native body owner.
+    // The source cache is never copied into the profile being persisted or exported.
+    if (currentBody()?.managed === true && get()?.user && get().user.id === useSparkyGym.getState().owner && get()?.S) {
+      S = { ...S }
+      for (const key of MANAGED_BODY_FIELDS) S[key] = get().S[key]
+    }
     // A join holds another tab's changes, which this copy then owes the server too.
     if (stamp || joined) S._ts = Math.max(Date.now(), (base?.ts || 0) + 1, Number(S._ts) || 0)
     // Every copy that enters the store — an edit, a pull, an adoption, a restored backup — has its
@@ -762,6 +771,12 @@ export const useStore = create((set, get) => {
   const adopt = (next, rev) => { persist(next, false, false); writeSync(rev, next._ts, next._wid); markOwed(false) }
 
   const doPush = async (attempt = 0) => {
+    const owner = get().user?.id
+    if (owner && owner === useSparkyGym.getState().owner && !currentBody()) {
+      try { await refreshBody() }
+      catch (error) { markOwed(true); failed(error, { pending: true }); return }
+      if (get().user?.id !== owner || useSparkyGym.getState().owner !== owner || !currentBody()) return
+    }
     const S = get().S
     const { base } = metaOf()
     // A forced push is one attempt. One that fails is retried as an ordinary push against the
@@ -776,7 +791,7 @@ export const useStore = create((set, get) => {
     // An older app's owed copy over the revision it read: the server stamps what that app changed
     // against the copy it holds, exactly as it would for that app (api/sync-stamps.js).
     const legacy = readLegacy()
-    const body = { state: S, stamped: !(legacy && legacy.owner === get().user?.id) }
+    const body = { state: bodyWriteState(S, currentBody()), stamped: !(legacy && legacy.owner === get().user?.id) }
     if (asReplace != null) { body.baseRev = asReplace.rev; if (asReplace.wid) body.baseWid = asReplace.wid }
     else if (!force && base) { body.baseRev = base.rev; if (base.wid) body.baseWid = base.wid }
     try {
@@ -796,7 +811,10 @@ export const useStore = create((set, get) => {
         import('./useUI.js').then(({ useUI }) => useUI.getState().toast(t('Back online and synced with the server.'))).catch(() => {})
       }
     } catch (e) {
-      if (e.status === 409 && e.data && attempt < 2) {
+      if (e.data?.error === 'managed_body_fields' && attempt < 2) {
+        try { await refreshBody(); return doPush(attempt + 1) } catch { /* leave the write owed */ }
+      }
+      if (e.status === 409 && e.data?.state && e.data?.rev != null && attempt < 2) {
         // Another device wrote since this one last read. The server sent its document along;
         // merge and push once more against that revision. A second refusal in a row leaves the
         // copy owed and the next resume pull takes it from there. A backup import whose replace
@@ -1357,6 +1375,7 @@ export const useStore = create((set, get) => {
   if (referencedHashes(S0).size) loadPending()
   meta.set(S0, { base: readStoredSync(), owed: storedOwed() })
   const user0 = (() => { try { return JSON.parse(localStorage.getItem('gym_user')) || null } catch { return null } })()
+  setBodyOwner(user0?.id || null, serverBase())
   adoptHold = !!user0 && readAdopt()?.uid === user0.id
   const sync0 = { offline: false, pending: storedOwed(), auth: false, lastError: null, lastSynced: (() => { try { return +localStorage.getItem(SYNCED_AT_KEY) || 0 } catch { return 0 } })(), server: serverBase(), held: adoptHold }
   sync0.status = statusOf(sync0, user0)
@@ -1404,7 +1423,10 @@ export const useStore = create((set, get) => {
       const prevJson = import.meta.env?.MODE === 'test' ? JSON.stringify(prev) : null
       const draft = draftOf(prev)
       mut(draft.S)
-      const S = draft.done()
+      const S = identifyNewWorkoutRows(prev, draft.done())
+      if (currentBody()?.managed === true && get().user?.id === useSparkyGym.getState().owner) {
+        for (const key of MANAGED_BODY_FIELDS) S[key] = prev[key]
+      }
       // The stamps below write the change's records into these two maps in place (stampDeletions,
       // stampEdits); a draft that never touched them still shares them with the previous state.
       for (const k of ['deleted', 'edited']) if (S[k] && typeof S[k] === 'object' && S[k] === prev[k]) S[k] = clone(S[k])
@@ -1608,6 +1630,7 @@ export const useStore = create((set, get) => {
     // `adopt` (a sign-in, a pairing — { alwaysAsk } for a device link): adoptProfile follows and
     // decides what becomes of this copy; until it has, nothing is pulled or pushed (ADOPT_KEY).
     setUser(u, { adopt } = {}) {
+      setBodyOwner(u?.id || null, serverBase())
       if (u) {
         // The local copy belongs to whoever last signed in here. When a session expires or is
         // revoked elsewhere, boot() only drops the user and the data stays; a different profile
@@ -1674,6 +1697,7 @@ export const useStore = create((set, get) => {
         if (get().config && !('coach' in get().config)) get().refreshConfig()
       } else { rejoined = false; adoptHold = false; localStorage.removeItem('gym_user') }
       set({ user: u })
+      setBodyOwner(u?.id || null, serverBase())
       setSync({ held: adoptHold })
     },
 

@@ -1,5 +1,10 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from './store/useStore.js'
+import { useBodyState } from './store/useBodyState.js'
+import { readBodyState, bodyReadOnly } from './lib/sparkygym-client.js'
+import BodySource from './components/BodySource.jsx'
+import TrainingHints from './components/TrainingHints.jsx'
+import { useTrainingHints } from './lib/training-hints.js'
 import { useUI } from './store/useUI.js'
 import { EXDB, EXIDX, BODYPARTS, isCardio, isBodyweightEq, allExercises, equipmentOf, byCategory, smOf, searchExercises, similarExercises, exOr, isAssisted, betterWeight, beatsWeight, isCustomEx } from './lib/exercises.js'
 import { activeProfile, exAvailable, ALL_EQUIPMENT, newProfile, profileEquipment, ACC_V } from './lib/equipment.js'
@@ -77,7 +82,7 @@ import { copyText } from './lib/clipboard.js'
 import { queueRemaining, pinState } from './lib/queue.js'
 import { DAY_NOTE_TAGS, DAY_NOTE_LABEL, DAY_NOTE_ICON, dayNoteOf, dayNoteLine, canNoteDay, withDayNote } from './lib/day-notes.js'
 
-const S = () => useStore.getState().S
+const S = () => readBodyState(useStore.getState().S)
 const update = (...a) => useStore.getState().update(...a)
 const ui = () => useUI.getState()
 const toast = m => ui().toast(m)
@@ -362,6 +367,10 @@ function BwSheet({ required, onDone, close }) {
   </>
 }
 export function bwSheet(opts = {}) {
+  if (bodyReadOnly()) {
+    if (opts.required) { opts.onDone?.(lastBW(S())?.w ?? null); return }
+    return weighInsSheet()
+  }
   const h = ui().openSheet(close => <BwSheet {...opts} close={close} />, { locked: !!opts.required })
   return h
 }
@@ -393,7 +402,7 @@ function WeighInRow({ b, unit, confirm = false }) {
   return <div className="row between" style={{ padding: '9px 2px', borderBottom: '1px solid var(--sep)' }}>
     <span className="small muted">{fmtDate(b.d, true)}</span>
     <span className="row" style={{ gap: 12 }}><b>{fmtNum(b.w)} {unit}</b>
-      <button className="iconbtn" style={{ width: 32, height: 30, borderRadius: 8, fontSize: 15, color: 'var(--red)' }} onClick={confirm ? ask : delEntry} aria-label={t('Delete weigh-in')}><Icon name="trash" /></button></span>
+      {!bodyReadOnly() && <button className="iconbtn" style={{ width: 32, height: 30, borderRadius: 8, fontSize: 15, color: 'var(--red)' }} onClick={confirm ? ask : delEntry} aria-label={t('Delete weigh-in')}><Icon name="trash" /></button>}</span>
   </div>
 }
 
@@ -403,7 +412,7 @@ function WeighInRow({ b, unit, confirm = false }) {
 // weekly means, since the swing from one morning to the next is what makes a single weigh-in
 // hard to read. The weeks start on the profile's first day of the week.
 function WeighIns() {
-  const st = useStore(s => s.S)
+  const st = useBodyState()
   const ws = weekStartOf(st)
   const weeks = useMemo(() => weeklyWeights(st.bodyweight, ws), [st.bodyweight, ws])
   const points = useMemo(() => [...weeks].reverse()
@@ -415,6 +424,7 @@ function WeighIns() {
   </>
   return <>
     <h3 style={{ marginBottom: 2 }}>{t('Weigh-ins')}</h3>
+    <BodySource />
     <div className="muted small" style={{ marginBottom: 10 }}>{tn('{0} weigh-in', '{0} weigh-ins', n)}</div>
     <div className="chart"><LineChart points={points} h={140} unit={st.unit} goal={st.targetW} /></div>
     <div className="small dim" style={{ marginTop: 6 }}>{t('Weekly average')}</div>
@@ -461,6 +471,7 @@ function ImportSummary({ parsed, close }) {
   const fresh = (isBW ? parsed.bodyweight.length + checkIns.length : parsed.workouts.length) - have
 
   const doImport = () => {
+    if (isBW && bodyReadOnly()) return
     let res
     update(s => { res = mergeImport(s, parsed) })
     close()
@@ -472,6 +483,7 @@ function ImportSummary({ parsed, close }) {
 
   return <>
     <h3>{parsed.source ? t('Import from {0}', parsed.source) : t('Import history')}</h3>
+    {isBW && <BodySource />}
     <div className="muted small" style={{ marginBottom: 12 }}>
       {fmtDateRange(parsed.from, parsed.to, true)}
     </div>
@@ -518,7 +530,7 @@ function ImportSummary({ parsed, close }) {
       </div>
     </>}
 
-    <Button variant="primary" onClick={doImport} disabled={!fresh}>
+    <Button variant="primary" onClick={doImport} disabled={!fresh || (isBW && bodyReadOnly())}>
       {fresh ? t('Import') : t('Nothing new to import')}
     </Button>
     <div style={{ height: 8 }} />
@@ -572,7 +584,7 @@ function HevyImportSheet({ close }) {
   const [payload, setPayload] = useState(null) // { workouts, routines, bodyweight }
   const [wantWorkouts, setWantWorkouts] = useState(true)
   const [wantRoutines, setWantRoutines] = useState(true)
-  const [wantBody, setWantBody] = useState(true)
+  const [wantBody, setWantBody] = useState(!bodyReadOnly())
   const keyRef = useRef(null)
 
   // Drop the key from memory when the sheet goes away (unmount or successful import).
@@ -596,7 +608,7 @@ function HevyImportSheet({ close }) {
       }
       setWantWorkouts(!!data.workouts.workouts.length)
       setWantRoutines(!!data.routines.routines.length)
-      setWantBody(!!data.bodyweight.bodyweight.length)
+      setWantBody(!bodyReadOnly() && !!data.bodyweight.bodyweight.length)
       setPayload(data)
     } catch (e) {
       if (e instanceof HevyApiError && e.message === 'auth') toast(t('That Hevy API key was refused'))
@@ -624,7 +636,7 @@ function HevyImportSheet({ close }) {
         addedR = res.added
         parts.push(tn('{0} routine imported', '{0} routines imported', res.added))
       }
-      if (wantBody && payload.bodyweight.bodyweight.length) {
+      if (wantBody && !bodyReadOnly() && payload.bodyweight.bodyweight.length) {
         const res = mergeImport(s, payload.bodyweight)
         addedB = res.added
         parts.push(tn('{0} weigh-in imported', '{0} weigh-ins imported', res.added))
@@ -715,7 +727,7 @@ function HevyImportSheet({ close }) {
         <div className="tt" style={{ fontSize: 15 }}>{t('Import weigh-ins')}</div>
         <div className="small dim">{t('{0} new · {1} days already here', freshB, haveB)}</div>
       </div>
-      <Switch checked={wantBody} onChange={setWantBody} />
+      <Switch checked={wantBody && !bodyReadOnly()} onChange={setWantBody} disabled={bodyReadOnly()} />
     </div>}
     {!b.bodyweight.length && <div style={{ borderBottom: '1px solid var(--sep)', marginBottom: 8 }} />}
 
@@ -752,6 +764,7 @@ function GoalSheet({ close }) {
   const st = S()
   const bw = lastBW(st)
   const [v, setV] = useState(st.targetW || (bw ? bw.w : 70))
+  if (bodyReadOnly()) return <><h3>{t('Target weight')}</h3><BodySource /><p>{st.targetW == null ? t('Not set') : fmtNum(st.targetW) + ' ' + st.unit}</p><Button onClick={close}>{t('Close')}</Button></>
   return <>
     <h3>{t('Target weight')}</h3>
     <div className="muted small">{t('Your goal is drawn as a line through the weight charts, and gains/losses are colored by whether they move toward it.')}</div>
@@ -2548,6 +2561,7 @@ function PlanImport({ bundle, close }) {
 /* ============================ day override / assign ============================ */
 function DayOverride({ iso, close }) {
   const st = useStore(s => s.S)
+  const hints = useTrainingHints(iso)
   const hasOvr = st.dayPlan[iso] !== undefined
   // A fulfilled pin (a coach session pinned here and since done) reads as no override, as it does
   // everywhere else — the row to clear the leftover entry stays.
@@ -2592,7 +2606,8 @@ function DayOverride({ iso, close }) {
     {effIds.includes(r.id) && <Icon name="check" className="accent" />}</div>
   return <>
     <h3>{fmtDate(iso, true)}</h3>
-    <div className="muted small" style={{ marginBottom: 12 }}>{t('Weekly plan:')} {weeklyNames.length ? deriveSessionName(weeklyNames) : t('Rest')}{changed && <span style={{ color: 'var(--orange)' }}> · {t('changed for this day')}</span>}<br />{t('Sick, missed a day or want a different session? Pick what to train instead.')}</div>
+    <TrainingHints date={iso} />
+    {!hints.length && <div className="muted small" style={{ marginBottom: 12 }}>{t('Weekly plan:')} {weeklyNames.length ? deriveSessionName(weeklyNames) : t('Rest')}{changed && <span style={{ color: 'var(--orange)' }}> · {t('changed for this day')}</span>}<br />{t('Sick, missed a day or want a different session? Pick what to train instead.')}</div>}
     {missed && <div style={{ marginBottom: 14 }}><Button variant="primary" icon="checkCircle" onClick={logIt}>{t('Log this workout')}</Button></div>}
     {canNote && <div className="day-note" style={{ marginBottom: 14 }}>
       <div className="item day-note-row" {...tappable(() => dayNoteSheet(iso))}>
@@ -3119,6 +3134,7 @@ export function startFlow(routineIds) {
 // so the sets ticked on it find it, and its start time, however late the phone hears of it.
 export function beginWorkout(routineIds, bw, { id = null, start = null } = {}) {
   const st = S()
+  if (bodyReadOnly()) bw = lastBW(st)?.w ?? null
   const { entries, routineIds: rids, routines } = buildCombinedEntries(st, routineIds)
   const startAt = Number.isFinite(start) && start > 0 ? start : Date.now()
   update(s => {
@@ -3129,6 +3145,7 @@ export function beginWorkout(routineIds, bw, { id = null, start = null } = {}) {
       routineIds: rids,
       name: routines.length ? deriveSessionName(routines.map(r => r.name)) : t('Freestyle'),
       bw: bw || null, cur: 0, entries,
+      ...(Number.isFinite(st.targetW) ? { targetW: st.targetW } : {}),
       // Snapshot the layout at start so the header ⋮ can change it for this session only —
       // changing the saved default (Settings → Workout view) mid-session leaves it alone.
       workoutView: st.workoutView || 'cards',

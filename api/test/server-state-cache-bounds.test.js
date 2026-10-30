@@ -1,13 +1,5 @@
-/* The stat cache behind GET /api/data/rev (and the reminder tick, and the two push routes) holds
-   a whole parsed state per user — megabytes each on a long-used profile — and used to hold every
-   one of them for the life of the process. Two bounds now: an entry nobody has hit for
-   STATE_CACHE_TTL_MS is dropped, and the map never exceeds 64 users, oldest hit first.
-
-   Neither is visible in a response on its own, so both are read here through the probe
-   server-state-read-cost.test.js established: an out-of-band rewrite with a pinned mtime and an
-   identical size is invisible to the cache key, so a cached read answers with the old revision
-   and a read that had to go to disk answers with the new one. Nothing in this tree writes a state
-   file that way — which is what makes it a probe rather than a bug. */
+/* Parsed SQL profile states are bounded by LRU capacity and idle TTL. A child-only JSON.parse
+   probe observes real cache misses without relying on legacy files or timestamp granularity. */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -17,6 +9,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { boundPort } from './helpers.mjs';
+import { writeProfile } from './profile-fixture.mjs';
 
 const API = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECRET = crypto.randomBytes(32).toString('hex');
@@ -35,9 +28,14 @@ async function startServer(t, env = {}) {
   fs.writeFileSync(path.join(dataDir, 'secret'), SECRET, { mode: 0o600 });
   const users = [PROBE, ...FILLERS].map(id => ({ id, name: id, created: new Date().toISOString() }));
   fs.writeFileSync(path.join(dataDir, 'db.json'), JSON.stringify({ users, creds: [], subs: [], invites: [] }));
-  // Every filler needs a file of its own: a uid with no state file is never cached at all.
+  // Legacy fixtures are imported at boot; each filler needs a stored profile to be cached.
   for (const uid of FILLERS) fs.writeFileSync(path.join(dataDir, `state-${uid}.json`), JSON.stringify({ _rev: 1, workouts: [], routines: [] }));
-  const child = spawn(process.execPath, ['server.js'], {
+  const probe = `const parse = JSON.parse; JSON.parse = function (...args) {
+    const value = Reflect.apply(parse, this, args);
+    if (value?._cacheProbe === '${PROBE}') console.log('PROFILE_PARSE');
+    return value;
+  };`;
+  const child = spawn(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(probe)}`, 'server.js'], {
     cwd: API, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, PORT: '0', DATA_DIR: dataDir, ORIGIN: 'http://localhost:8080', RP_ID: 'localhost', ...env }
   });
@@ -46,43 +44,47 @@ async function startServer(t, env = {}) {
   child.stdout.on('data', d => { log += d; });
   child.stderr.on('data', d => { log += d; });
   const port = await boundPort(child, () => log);
-  return { api: `http://127.0.0.1:${port}`, dataDir };
+  return { api: `http://127.0.0.1:${port}`, dataDir,
+    parses: async () => {
+      // stdout and HTTP use different pipes; drain the probe before comparing counts.
+      await new Promise(r => setTimeout(r, 50));
+      return (log.match(/^PROFILE_PARSE$/gm) || []).length;
+    } };
 }
 
-// utimesSync round-trips this value exactly, and the document is the same length at every
-// revision below, so (mtimeMs, size) cannot tell two of these apart.
-const PINNED = new Date(1700000000000);
-const writePinned = (dir, uid, rev) => {
-  const file = path.join(dir, `state-${uid}.json`);
-  fs.writeFileSync(file, JSON.stringify({ _rev: rev, lang: 'en', workouts: [], routines: [] }));
-  fs.utimesSync(file, PINNED, PINNED);
-};
+const seedProbe = dir => writeProfile(dir, PROBE, { _rev: 1, _cacheProbe: PROBE, lang: 'en', workouts: [], routines: [] });
 
 test('the cache holds at most 64 users, and the least recently polled is the one dropped', async t => {
   const h = await startServer(t);
   const rev = async uid => (await fetch(`${h.api}/api/data/rev`, { headers: headers(uid) }).then(r => r.json())).rev;
 
-  writePinned(h.dataDir, PROBE, 7);
-  assert.equal(await rev(PROBE), 7, 'the first poll reads the file');
-  writePinned(h.dataDir, PROBE, 8);
-  assert.equal(await rev(PROBE), 7, 'and the second is served from the cache, as it should be');
+  seedProbe(h.dataDir);
+  await rev(PROBE);
+  const first = await h.parses();
+  assert.ok(first > 0, 'the probe observes actual SQL state parsing');
+  await rev(PROBE);
+  assert.equal(await h.parses(), first, 'an unchanged SQL revision reuses parsed state');
 
   // 64 other people poll once each. That is one more entry than the cap allows alongside the
   // probe's, and the probe's is the one nobody has touched since.
   for (const uid of FILLERS) await rev(uid);
 
-  assert.equal(await rev(PROBE), 8, 'the probe was evicted, so its file was read again');
+  await rev(PROBE);
+  assert.equal(await h.parses(), first + 1, 'the least recently used profile was evicted and parsed again');
 });
 
 test('an entry nobody has polled for longer than the TTL is dropped', async t => {
-  const h = await startServer(t, { STATE_CACHE_TTL_MS: '150' });
+  const h = await startServer(t, { STATE_CACHE_TTL_MS: '500' });
   const rev = async uid => (await fetch(`${h.api}/api/data/rev`, { headers: headers(uid) }).then(r => r.json())).rev;
 
-  writePinned(h.dataDir, PROBE, 7);
-  assert.equal(await rev(PROBE), 7);
-  writePinned(h.dataDir, PROBE, 8);
-  assert.equal(await rev(PROBE), 7, 'still inside the TTL — the cached copy answers');
+  seedProbe(h.dataDir);
+  await rev(PROBE);
+  const first = await h.parses();
+  assert.ok(first > 0, 'the probe observes actual SQL state parsing');
+  await rev(PROBE);
+  assert.equal(await h.parses(), first, 'still inside the TTL, no repeated SQL state parse');
 
-  await new Promise(r => setTimeout(r, 400));
-  assert.equal(await rev(PROBE), 8, 'past it, the entry is gone and the file is read again');
+  await new Promise(r => setTimeout(r, 700));
+  await rev(PROBE);
+  assert.equal(await h.parses(), first + 1, 'past the TTL, the profile is parsed again');
 });

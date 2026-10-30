@@ -11,6 +11,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
+import { useBodyState } from '../store/useBodyState.js'
 import { useUI } from '../store/useUI.js'
 import { t } from '../lib/i18n.js'
 import { DAYN } from '../lib/format.js'
@@ -60,7 +61,7 @@ export default function CoachIntake() {
   const nav = useNavigate()
   const [params] = useSearchParams()
   const editing = params.get('edit') === '1'
-  const S = useStore(s => s.S)
+  const S = useBodyState()
   const user = useStore(s => s.user)
   const config = useStore(s => s.config)
   const coachMode = useStore(s => s.coachLocal?.mode)

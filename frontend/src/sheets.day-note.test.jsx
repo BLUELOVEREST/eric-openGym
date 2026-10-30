@@ -12,6 +12,7 @@ import { dayOverrideSheet, dayNoteSheet, calendarSheet } from './sheets.jsx'
 import Heatmap from './components/Heatmap.jsx'
 import History, { historyRows } from './views/History.jsx'
 import { withDayNote, dayNoteOf } from './lib/day-notes.js'
+import { useSparkyGym } from './lib/sparkygym-client.js'
 
 const clone = v => JSON.parse(JSON.stringify(v))
 const S = () => useStore.getState().S
@@ -53,6 +54,7 @@ beforeEach(() => {
   useUI.setState({ sheets: [], toasts: [] })
   document.body.innerHTML = ''
   install()
+  useSparkyGym.setState({ owner: null, scope: '', trainingHints: null })
 })
 afterEach(() => {
   act(() => { mounted.splice(0).forEach(root => root.unmount()) })
@@ -60,6 +62,30 @@ afterEach(() => {
 })
 
 describe('the day sheet offers a note', () => {
+  it.each([{ days: [] }, { days: [{ weekday: 1, slots: [] }] }])('shows source rest for omitted or explicit empty weekdays without excusing the day (%j)', ({ days }) => {
+    useSparkyGym.setState({ trainingHints: { revision: 1, date: null, hints: [{ entity_id: 'sf', name: 'Next week', timezone: 'UTC', week_start: 1, effective_from: '2026-09-21', effective_until: null, days }] } })
+    const before = clone(S())
+    dayOverrideSheet('2026-09-21')
+    expect(mountTopSheet().querySelector('section[aria-label="Training hints"]').textContent).toContain('Rest day')
+    expect(S()).toEqual(before)
+  })
+  it('shows future SF hints without writing a note, assignment, or workout', () => {
+    install({ routines: [], week: {} })
+    useSparkyGym.setState({ trainingHints: { revision: 1, date: null, hints: [{ entity_id: 'sf', name: 'Next week', timezone: 'Asia/Shanghai', week_start: 1, effective_from: '2026-09-21', effective_until: null, days: [{ weekday: 1, slots: [{ time_slot: 'morning', activity: 'Chest', is_main: false }, { time_slot: 'evening', activity: 'Football', is_main: true }] }] }] } })
+    const before = clone(S())
+    dayOverrideSheet('2026-09-21')
+    const host = mountTopSheet()
+    expect(host.textContent).toContain('Morning · Chest')
+    expect(host.textContent).toContain('Evening · Football · Main session')
+    expect(host.textContent).not.toContain('Weekly plan:')
+    expect(host.textContent).not.toContain('Add a note for this day')
+    expect(S()).toEqual(before)
+  })
+  it('keeps the original weekly rest explanation when no SF hint applies', () => {
+    install({ routines: [], week: {} })
+    dayOverrideSheet('2026-09-21')
+    expect(mountTopSheet().textContent).toContain('Weekly plan: Rest')
+  })
   const offered = iso => {
     useUI.setState({ sheets: [] })
     dayOverrideSheet(iso)

@@ -1,6 +1,7 @@
 // Web Push subscribe/unsubscribe — requires a signed-in profile (subscriptions are stored
 // server-side per user, same as everything else under /api).
 import { api } from './api.js'
+import { randomId } from './ids.js'
 
 // main.jsx registers the service worker on https only, so on any other origin there is no
 // worker and `navigator.serviceWorker.ready` never settles — the toggle looked usable and hung.
@@ -27,7 +28,7 @@ export function deviceId() {
   try {
     let id = localStorage.getItem(DEVICE_KEY)
     if (!id || !DEVICE_ID_RULE.test(id)) {
-      id = (crypto.randomUUID?.() || Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('')).replace(/-/g, '')
+      id = randomId()
       localStorage.setItem(DEVICE_KEY, id)
     }
     return id

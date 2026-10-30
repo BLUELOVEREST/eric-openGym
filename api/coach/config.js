@@ -25,6 +25,7 @@
    use, and shared by every profile on the instance under the daily caps. */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import { syncDirectory } from '../storage/file-sync.js';
 import path from 'node:path';
 import { HTTP_PROVIDERS, baseUrlFor } from './core/providers.js';
 import { MAX_OUTPUT_TOKENS } from './core/adapters/http.js';
@@ -223,7 +224,11 @@ export function saveProfileAuth(uid, auth) {
   return auth;
 }
 export function clearProfileAuth(uid) {
-  try { fs.unlinkSync(profileAuthFile(uid)); return true; } catch { return false; }
+  let removed = true;
+  try { fs.unlinkSync(profileAuthFile(uid)); }
+  catch (error) { if (error.code === 'ENOENT') removed = false; else throw error; }
+  syncDirectory(DATA);
+  return removed;
 }
 
 /* ---------- which credential pays for this job ---------- */

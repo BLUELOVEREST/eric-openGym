@@ -177,6 +177,196 @@ security:
   - bearerAuth: []
 
 paths:
+  /api/training-hints:
+    get:
+      tags: [data]
+      summary: Read the owner's SF-produced training hints
+      description: >-
+        Cookie or bearer owner authentication required. Omit date to read all retained
+        source metadata for offline calendar resolution (date is null). A supplied
+        calendar date filters by inclusive effective range. Hints are separate from
+        profile state, private day notes, assignments and completed workouts.
+        Revocation retains hints until explicit source purge. Refresh from native SSE,
+        focus or reconnect, never polling.
+      parameters:
+        - in: query
+          name: date
+          required: false
+          schema: {type: string, format: date}
+      responses:
+        '200':
+          description: Owner-isolated native hint metadata
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [revision, date, hints]
+                properties:
+                  revision: {type: integer, minimum: 0}
+                  date: {type: [string, 'null'], format: date}
+                  hints:
+                    type: array
+                    items: {$ref: '#/components/schemas/TrainingHint'}
+        '400': {description: Invalid calendar date or unsupported query parameter}
+        '401': {description: Session required}
+  /api/body/profile:
+    get:
+      tags: [data]
+      summary: Read the owner's native source-managed body projection
+      description: Cookie or bearer session required. Measurements retain every source entity and its historical definition snapshot. Values use canonical kg, cm, percent, none or text. Revocation retains read-only history.
+      responses:
+        '200':
+          description: Native body read model
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [managed, connection_id, source, revision, definitions, measurements, target]
+                properties:
+                  managed: {type: boolean}
+                  connection_id: {type: [string, 'null'], format: uuid}
+                  source: {enum: [sparkyfitness, null]}
+                  revision: {type: integer, minimum: 0}
+                  definitions: {type: array, items: {type: object}}
+                  measurements: {type: array, items: {type: object, required: [entity_id, metric_id, date, value, unit, measured_at, timezone, definition]}}
+                  target: {type: [object, 'null']}
+        '401': {description: Session required}
+  /api/integrations/sparkygym:
+    get:
+      tags: [data]
+      summary: List the signed-in owner's public integration status
+      description: Returns connections only. Credentials, invitation secrets, queue payloads and other owners are never returned.
+      responses:
+        '200': {description: 'Object with connections array; each connection includes connection_id, status, peer_origin, peer_owner_ref, scopes, include_history, affected_record_counts, capabilities and delivery. Delivery contains actual pending, failed, pending_media counts, last_success_at and a sanitized last_error_code.'}
+        '401': {description: Session required}
+  /api/integrations/sparkygym/claim:
+    post:
+      tags: [data]
+      summary: Claim a ten-minute SparkyFitness invitation
+      description: The body is exactly invitation, allow_http and allow_private_network. Both network permissions require independent explicit owner opt-in. The configured server ORIGIN supplies og_origin. Claim remains pending until the original SF owner approves. Returns connection, never credentials.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [invitation, allow_http, allow_private_network]
+              properties:
+                invitation: {type: object}
+                allow_http: {type: boolean}
+                allow_private_network: {type: boolean}
+      responses:
+        '200': {description: Public pending connection}
+        '400': {description: Invalid or expired invitation}
+        '401': {description: Session required}
+        '409': {description: Invitation already claimed or binding conflict}
+  /api/integrations/sparkygym/notifications:
+    get:
+      tags: [data]
+      summary: Owner-authenticated durable integration notifications
+      description: text/event-stream with durable cursor IDs. Cookie and bearer authentication are supported. Resume using Last-Event-ID or cursor. An expired or future cursor emits snapshot-required; fetch /api/body/profile before reconnecting. No suspended-app timer guarantee.
+      responses:
+        '200': {description: Durable SSE replay and subsequent owner events}
+        '401': {description: Session required}
+  /api/integrations/sparkygym/{connection_id}/pause:
+    parameters:
+      - {name: connection_id, in: path, required: true, schema: {type: string, format: uuid}}
+    post:
+      tags: [data]
+      summary: Pause this owner's connection
+      description: Requires an empty JSON object. Capture remains transactional; delivery stops. Returns connection.
+      responses:
+        '200': {description: Public paused connection}
+        '404': {description: Connection not owned by the signed-in user}
+  /api/integrations/sparkygym/{connection_id}/resume:
+    parameters:
+      - {name: connection_id, in: path, required: true, schema: {type: string, format: uuid}}
+    post:
+      tags: [data]
+      summary: Resume this owner's connection and wake durable delivery
+      description: Requires an empty JSON object. Returns connection.
+      responses:
+        '200': {description: Public connection}
+        '404': {description: Connection not owned by the signed-in user}
+  /api/integrations/sparkygym/{connection_id}/revoke:
+    parameters:
+      - {name: connection_id, in: path, required: true, schema: {type: string, format: uuid}}
+    post:
+      tags: [data]
+      summary: Revoke locally and durably notify the peer
+      description: Requires an empty JSON object. Domain access stops immediately; source history remains read-only. Only the queued revoke control retains credential access until acknowledgement. Returns connection.
+      responses:
+        '200': {description: Public revoked connection}
+        '404': {description: Connection not owned by the signed-in user}
+  /api/integrations/sparkygym/{connection_id}/purge:
+    parameters:
+      - {name: connection_id, in: path, required: true, schema: {type: string, format: uuid}}
+    post:
+      tags: [data]
+      summary: Explicitly purge this revoked source's body projections
+      description: Requires exactly confirm=true. Never removes manual, Hevy or watch history, local body archives, or another source. Ordinary reset and unlink do not perform this operation. Returns connection.
+      responses:
+        '200': {description: Public revoked connection}
+        '400': {description: Explicit confirmation required}
+        '404': {description: Connection not owned by the signed-in user}
+  /api/integrations/sparkygym/{connection_id}/snapshot:
+    parameters:
+      - {name: connection_id, in: path, required: true, schema: {type: string, format: uuid}}
+    post:
+      tags: [data]
+      summary: Explicitly queue a consistent two-way snapshot
+      description: Requires exactly include_history boolean. Captures immutable begin, items and complete under the native write boundary. Pruning requires matching count/hash and never touches post-watermark values. Returns connection.
+      responses:
+        '200': {description: Snapshot queued; public connection returned}
+        '404': {description: Connection not owned by the signed-in user}
+  /api/integrations/v1/pair/accept:
+    post:
+      tags: [data]
+      summary: Accept SF-owner-approved pairing using the bound directional key
+      description: Exact-byte signed control. X-SparkyGym-Request-Id equals connection_id. The complete strict claim binding must match. Atomic activation archives local body values and completes the pending outgoing claim. Response is signed with the OG directional key and contains connection.
+      responses:
+        '200': {description: Signed public connection}
+        '401': {description: Invalid signature or binding key}
+        '409': {description: Binding conflict}
+  /api/integrations/v1/events:
+    post:
+      tags: [data]
+      summary: Receive source-owned body events atomically
+      description: Exact-byte HMAC event envelope requires source_cursor and X-SparkyGym-Request-Id=event_id. Inbox receipt, stream revision, projection and notification commit together. Signed applied, duplicate or stale receipt; conflicts pause visibly. No whole-profile patch is accepted.
+      responses:
+        '200': {description: Signed event receipt}
+        '400': {description: Signed invalid domain payload error}
+        '401': {description: Authentication failed}
+        '409': {description: Signed event conflict or source rewind}
+        '503': {description: Pairing not active or transient storage failure}
+  /api/integrations/v1/capabilities:
+    get:
+      tags: [data]
+      summary: Read authenticated paired capabilities
+      description: Requires a signed empty body and a fresh immutable request UUID. Response MAC binds request UUID, status and exact response bytes.
+      responses:
+        '200': {description: Signed version, resources, max_event_bytes, max_media_bytes and media_mime_types}
+        '401': {description: Authentication failed}
+  /api/integrations/v1/snapshot:
+    post:
+      tags: [data]
+      summary: Exchange signed snapshot request, begin or complete controls
+      description: Fixed path and exact bytes authenticated. Every control has its own immutable request UUID. Begin declares snapshot_id, start_cursor, watermark, expected_count, membership_sha256 and prune_resources. Completion validates sorted UTF-8 resource/NUL/entity/LF membership before same-source pruning.
+      responses:
+        '200': {description: Signed snapshot_queued, snapshot_started or snapshot_complete response}
+        '401': {description: Authentication failed}
+        '409': {description: Snapshot conflict, incomplete membership or source rewind}
+  /api/integrations/v1/revoke:
+    post:
+      tags: [data]
+      summary: Receive paired revocation
+      description: Signed immutable control bound to connection_id and request_id. Immediately blocks domain access while retaining source history. Signed public connection response.
+      responses:
+        '200': {description: Signed public revoked connection}
+        '401': {description: Authentication failed}
   /api/health:
     get:
       tags: [meta]
@@ -3604,16 +3794,50 @@ components:
       additionalProperties: true
 
     # ------------------------------------------------------------------ state sync
+    TrainingHint:
+      type: object
+      additionalProperties: false
+      required: [entity_id, name, timezone, week_start, effective_from, effective_until, days]
+      properties:
+        entity_id: {type: string, minLength: 1, maxLength: 200}
+        name: {type: string, minLength: 1, maxLength: 300}
+        timezone: {type: string, description: Source IANA timezone}
+        week_start: {type: integer, minimum: 0, maximum: 6}
+        effective_from: {type: string, format: date}
+        effective_until: {type: [string, 'null'], format: date}
+        days:
+          type: array
+          maxItems: 7
+          description: Unique weekdays. Missing weekdays and empty slots mean rest within the effective range.
+          items:
+            type: object
+            additionalProperties: false
+            required: [weekday, slots]
+            properties:
+              weekday: {type: integer, minimum: 0, maximum: 6, description: Sunday is 0}
+              slots:
+                type: array
+                maxItems: 4
+                description: Unique buckets; exactly one main when nonempty. No inferred clocks or slot IDs.
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [time_slot, activity, is_main]
+                  properties:
+                    time_slot: {type: string, enum: [morning, noon, afternoon, evening]}
+                    activity: {type: string, minLength: 1, maxLength: 300}
+                    is_main: {type: boolean}
+
     State:
       type: object
       description: |
-        The whole app state as one blob. The server treats it as opaque (it only
-        strips `active` on save and reads a few fields for reminders and the admin
-        dashboard). The schema below is **representative, not enforced** (except
-        `workouts` and `routines`, which must be arrays (or null) when present), and grows
-        with the app. Concurrent writes are caught by the server's revision (`_rev`,
-        see PUT /api/data); the client merges the two documents and decides by `_ts`
-        which side's settings win.
+        The native profile, stored transactionally in SQL and mirrored locally by
+        the phone. It is not opaque: JSON safety, routine assignments,
+        managed body ownership and integration boundaries are enforced on writes.
+        The remaining schema is representative and grows with the app. Concurrent
+        writes use the revision/CAS contract; clients merge per-entry and per-setting
+        edit stamps, not simply the newest whole document. SF training hints are a
+        separate source-owned read model, never profile state or personal day notes.
       properties:
         _ts:
           type: number
@@ -3642,6 +3866,8 @@ components:
           type: object
           description: >-
             When each setting and plan day was last changed, ms ({ queue: ms, 'week.3': ms, … }).
+            Each week.N stamp owns that weekday's routine assignments;
+            different weekdays merge independently.
             Never shrinks on the server; stamped for writers that do not stamp (see PUT /api/data).
           additionalProperties: { type: number }
         unit: { type: string, enum: [kg, lb] }
@@ -3663,8 +3889,16 @@ components:
           description: A planner's floating week {ids, since, startsOn, label}. The week's sessions as an ordered queue, the first undone one is today's. Written by an API client or by the app's own rotation feature, read by the reminder tick.
         week:
           type: object
-          description: 'Weekly plan: weekday (0=Sunday … 6) → routine id.'
-          additionalProperties: { type: string }
+          description: >-
+            Native weekday routine assignments, Sunday=0 through Saturday=6.
+            Several routine IDs combine into one workout. Legacy scalar IDs remain
+            readable. Independent freestyle workouts need no assignment.
+          patternProperties:
+            '^[0-6]$':
+              oneOf:
+                - { type: string }
+                - { type: array, items: { type: string } }
+          additionalProperties: false
         dayPlan:
           type: object
           description: >-

@@ -18,6 +18,7 @@
 //   - a proposal waits in the device file, not in S, so it survives an app kill without
 //     riding into a backup or a sync.
 import * as payloadLib from '../../../api/coach/core/payload.js'
+import { readBodyState } from './sparkygym-client.js'
 import { runPipeline } from '../../../api/coach/core/pipeline.js'
 import { waitingProposal } from '../../../api/coach/core/pending.js'
 import { isDue } from '../../../api/coach/core/due.js'
@@ -185,6 +186,7 @@ async function start(S, kind, opts) {
 }
 
 async function run(S, kind, opts, d, adapter) {
+  S = readBodyState(S)
   const key = await getApiKey()
   const payload = payloadLib.build(S, {
     handle: await handle(), kind, intake: opts.intake, note: opts.note, refine: opts.refine, previous: opts.previous, workoutId: opts.workoutId, today: opts.today,

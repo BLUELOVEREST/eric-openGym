@@ -1,4 +1,5 @@
-/* The admin routes read state files nobody validated. PUT /api/data drops null and shapeless
+import { writeProfile } from './profile-fixture.mjs';
+/* The admin routes read stored profiles nobody validated. PUT /api/data drops null and shapeless
    entries and refuses a non-array `workouts`/`routines` (QA C16/C19), but a document written
    before it did still sits on disk and answers to nobody — and every one of these routes walks
    those lists and dereferences what it finds. One throw is a 500 for the whole drill-down: the
@@ -48,7 +49,7 @@ async function startServer(t) {
   h.api = `http://127.0.0.1:${h.port}`;
   // The boot line is fine; anything that looks like a stack frame after this is a defect.
   h.stackFrames = () => h.log.split('\n').filter(l => /^\s+at /.test(l)).length;
-  h.plant = S => fs.writeFileSync(path.join(h.dataDir, `state-${VICTIM}.json`), JSON.stringify(S));
+  h.plant = S => writeProfile(h.dataDir, VICTIM, S);
   h.get = async p => { const r = await fetch(`${h.api}${p}`, { headers: asAdmin }); return { status: r.status, body: await r.json() }; };
   return h;
 }

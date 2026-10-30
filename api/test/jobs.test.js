@@ -38,6 +38,100 @@ async function settle(uid, ms = 15000) {
 }
 const lastOutcome = uid => jobs.readUser(uid).history.at(-1);
 
+test('permanent forget removes daily spend, stale temp state, and only this user\'s job log', () => {
+  const uid = 'u-permanent-record';
+  fs.mkdirSync(`${DIR}/coach`, { recursive: true });
+  fs.writeFileSync(`${DIR}/coach/${uid}.json`, JSON.stringify({ daily: { date: new Date().toISOString().slice(0, 10), count: 2 } }));
+  fs.writeFileSync(`${DIR}/coach/${uid}.json.tmp`, 'private proposal');
+  cfg.save({ log: [{ uid, outcome: 'ready' }, { uid: 'another', outcome: 'ready' }] });
+  jobs.clearUser(uid, { permanent: true });
+  assert.equal(fs.existsSync(`${DIR}/coach/${uid}.json`), false);
+  assert.equal(fs.existsSync(`${DIR}/coach/${uid}.json.tmp`), false);
+  assert.deepEqual(cfg.load().log.map(e => e.uid), ['another']);
+  assert.doesNotThrow(() => jobs.clearUser(uid, { permanent: true }), 'missing records are idempotent');
+});
+
+test('forget propagates non-ENOENT record errors for retryable account deletion', t => {
+  const uid = 'u-permanent-io';
+  const unlink = fs.unlinkSync;
+  t.mock.method(fs, 'unlinkSync', file => {
+    if (file === `${DIR}/coach/${uid}.json`) throw Object.assign(new Error('denied'), { code: 'EACCES' });
+    return unlink(file);
+  });
+  assert.throws(() => jobs.clearUser(uid, { permanent: true }), { code: 'EACCES' });
+});
+
+test('permanent forget syncs the coach directory and propagates sync failures', t => {
+  const uid = 'u-permanent-sync';
+  fs.mkdirSync(`${DIR}/coach`, { recursive: true });
+  fs.writeFileSync(`${DIR}/coach/${uid}.json`, '{}');
+  const open = fs.openSync, sync = fs.fsyncSync;
+  let directoryFd, synced = false;
+  t.mock.method(fs, 'openSync', (file, ...args) => {
+    const fd = open(file, ...args);
+    if (file === `${DIR}/coach`) directoryFd = fd;
+    return fd;
+  });
+  t.mock.method(fs, 'fsyncSync', fd => {
+    if (fd === directoryFd) {
+      synced = true;
+      throw Object.assign(new Error('sync failed'), { code: 'EIO' });
+    }
+    return sync(fd);
+  });
+  assert.throws(() => jobs.clearUser(uid, { permanent: true }), { code: 'EIO' });
+  assert.equal(synced, true);
+  assert.equal(fs.existsSync(`${DIR}/coach/${uid}.json`), false);
+  synced = false;
+  assert.throws(() => jobs.clearUser(uid, { permanent: true }), { code: 'EIO' }, 'retry must repeat the durability barrier even though unlink already succeeded');
+  assert.equal(synced, true);
+  t.mock.restoreAll();
+  assert.doesNotThrow(() => jobs.clearUser(uid, { permanent: true }));
+});
+
+test('consent forget propagates non-ENOENT reads instead of assuming an empty record', t => {
+  const uid = 'u-forget-read-io';
+  const read = fs.readFileSync;
+  t.mock.method(fs, 'readFileSync', (file, ...args) => {
+    if (file === `${DIR}/coach/${uid}.json`) throw Object.assign(new Error('denied'), { code: 'EACCES' });
+    return read(file, ...args);
+  });
+  assert.throws(() => jobs.clearUser(uid), { code: 'EACCES' });
+});
+
+test('permanent forget discards a live runtime result and cleans its private directory after exit', async () => {
+  const { adapterFor } = await import('../coach/adapters/index.js');
+  const adapter = adapterFor('fixture'), original = adapter.invoke;
+  let release, jobDir;
+  const held = new Promise(resolve => { release = resolve; });
+  adapter.invoke = async opts => {
+    jobDir = opts.jobDir;
+    fs.writeFileSync(`${jobDir}/private.json`, 'personal training data');
+    await held;
+    return { code: 0, text: '{"coach_contract":1,"nochange":true,"reading":"Steady."}' };
+  };
+  const uid = 'u-permanent-live', notified = [];
+  jobs.setProposalHook(u => notified.push(u));
+  try {
+    writeState(DIR, uid, sampleState());
+    jobs.enqueue(uid, { kind: 'review' });
+    assert.ok(jobDir);
+    jobs.clearUser(uid, { permanent: true });
+    assert.equal(fs.existsSync(`${DIR}/coach/${uid}.json`), false);
+    assert.equal(fs.existsSync(jobDir), true, 'do not remove a live process home');
+    release();
+    for (const until = Date.now() + 5000; fs.existsSync(jobDir) && Date.now() < until;) await new Promise(r => setTimeout(r, 10));
+    assert.equal(fs.existsSync(jobDir), false);
+    assert.equal(fs.existsSync(`${DIR}/coach/${uid}.json`), false);
+    assert.equal(cfg.load().log.some(e => e.uid === uid), false);
+    assert.deepEqual(notified, []);
+  } finally {
+    release();
+    adapter.invoke = original;
+    jobs.setProposalHook(null);
+  }
+});
+
 
 
 test('no consent, no job — the gate is on the server, not the screen', () => {
@@ -147,6 +241,41 @@ async function holdingProvider() {
   return { seen, held, until, answer, use, close };
 }
 const NOCHANGE = '{"coach_contract":1,"nochange":true,"reading":"Steady."}';
+
+test('permanent forget aborts HTTP work and drops queued work even when cleanup needs retry', async t => {
+  const p = await holdingProvider();
+  const live = 'u-delete-http', queued = 'u-delete-queued', blocker = 'u-delete-blocker';
+  const unlink = fs.unlinkSync;
+  let deny = true;
+  t.mock.method(fs, 'unlinkSync', file => {
+    if (deny && file === `${DIR}/coach/${live}.json`) throw Object.assign(new Error('denied'), { code: 'EACCES' });
+    return unlink(file);
+  });
+  try {
+    p.use();
+    for (const uid of [live, blocker, queued]) {
+      writeState(DIR, uid, sampleState());
+      jobs.enqueue(uid, { kind: 'review' });
+    }
+    await p.until(2);
+    assert.equal(jobs.status(queued).job.state, 'queued');
+    jobs.clearUser(queued, { permanent: true });
+    assert.throws(() => jobs.clearUser(live, { permanent: true }), { code: 'EACCES' });
+    await p.until(1);
+    deny = false;
+    jobs.clearUser(live, { permanent: true });
+    p.answer(NOCHANGE);
+    await settle(blocker);
+    for (const uid of [live, queued]) {
+      assert.equal(fs.existsSync(`${DIR}/coach/${uid}.json`), false);
+      assert.equal(cfg.load().log.some(entry => entry.uid === uid), false);
+    }
+    assert.equal(p.seen.length, 2, 'deleted queued work never reached the provider');
+  } finally {
+    deny = false;
+    p.close();
+  }
+});
 /** The job's own end, as opposed to status() going quiet: the instance log gains its line. */
 async function logged(n) {
   const t = Date.now() + 15000;

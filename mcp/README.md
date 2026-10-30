@@ -6,8 +6,8 @@ routines, workouts, body-weight log, estimated 1RMs, and muscle balance — dire
 self-hosted `./data` directory, and log a workout you describe to it.
 
 It runs locally as a stdio process spawned by the LLM client and adds no new container. The
-read tools need no authentication: they read the same `state-<uid>.json` files the openGym api
-already writes, and the LLM never sees passkeys, VAPID keys, or session secrets. The one write
+read tools need no authentication: they open the api's `profiles.sqlite` with native
+read-only SQLite, and the LLM never sees passkeys, VAPID keys, or session secrets. The one write
 tool, `log_workout`, is off until you pair it with your server (see
 [Logging workouts](#logging-workouts)).
 
@@ -20,6 +20,24 @@ The numbers it answers with are computed by the **same pure functions the React 
 ## Quick start
 
 ### 1. Install
+
+Use Node 22.22.0 or newer with `node:sqlite` support. Start the upgraded api once before
+reading local profiles: it creates schema version 1 and completes the one-time JSON import.
+MCP refuses missing databases, unknown schema versions and missing/invalid
+`storage_metadata.json_profiles_import_v1` completion markers. It never creates or migrates
+storage, and never falls back to legacy `state-<uid>.json` files. Auth/user metadata remains
+in the independent `db.json`; only id, name and creation date reach the read tools.
+Mount the whole data directory read-only (including SQLite WAL files when present), not
+just the database file. Each tool read checks the committed profile revision plus the native
+body revision, ownership and connection identity; no filesystem watcher or periodic polling
+is needed. Managed body values are composed from the canonical SparkyFitness snapshot,
+not the archived profile fields. Source-only metric names and units are retained. The raw
+profile `_rev` remains unchanged for sync/CAS. SQLite connections open lazily, not during imports.
+
+Workout writes use the existing `PUT /api/data` path with
+`X-SparkyGym-Client-Version: 1`. Before each write attempt MCP reads `/api/body/profile`
+and omits managed body fields only when that profile is managed; unpaired local body logs
+are preserved. Ownership-read failures stop the write rather than guessing.
 
 ```bash
 cd mcp
@@ -199,6 +217,12 @@ missing routine, zero-workout history, no synced state, superset links, three 1R
 tools see consistent values regardless of when the suite runs. The pure lib functions have
 their own 92 tests in `frontend/src/lib/*.test.js`.
 
+`test/state.test.js` uses real SQLite fixtures for revision-cache invalidation, deletion,
+fresh accounts, fail-closed storage errors, private profile selection and remote-only use.
+The standalone reader suite runs from the repo root with
+`node --test api/test/profile-reader.test.js`; it also checks schema/marker readiness,
+owner isolation, malformed records, idempotent close and committed WAL visibility.
+
 `log_workout` has two more files: `write-tools.test.js` against a stand-in api (conflicts,
 retries, a rejected token, dry runs, duplicates), and `log-workout.e2e.test.js` against the real
 `api/server.js` on a temp data directory, which needs `npm ci` in `api/` (it skips without it on
@@ -212,7 +236,7 @@ a laptop and fails under `CI`). The workout it builds is tested in
   rows it produces, and which of plan / confirmed weight / history each number came from.
 - **Phase 2:** read+write over stdio, in pieces (#116). Writes go through the api's own
   `PUT /api/data` with the revision they read, as a paired device does, rather than into
-  `state-<uid>.json` directly: the api is the one writer of that file, and its sync stamps are
+  `profiles.sqlite` directly: the api is the one writer of profile state, and its sync stamps are
   what keep a write from being undone by the next phone that merges.
   - **Done:** `log_workout`, on the paired-session token (`scripts/pair.mjs`).
   - Next: `add_bodyweight`, `edit_routine`, `assign_weekday`, `override_day`, log corrections.

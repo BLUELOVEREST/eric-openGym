@@ -757,28 +757,59 @@ are not encrypted at rest — whoever can read that folder can see them.
 
 ## 6. Backups
 
-Everything is in `./data`:
+Everything is in `./data`. Stop the API first so the SQL database, auth registry and
+uploaded files are a consistent set. This applies to both commands below:
 
 ```bash
+docker compose stop api
 tar czf opengym-backup-$(date +%F).tar.gz data/
+tar tzf opengym-backup-$(date +%F).tar.gz
+docker compose start api
 ```
 
 That archive contains all profiles, passkeys and workout history — and, if the activity log is
 on, `audit.log` with everyone's sign-in times. Worth knowing before you ship the archive to a
-backup service you don't run. Restore by unpacking it back into the project folder. (Individual
+backup service you don't run. Restore with the API stopped into a clean data directory,
+not over an existing database or leftover WAL. Preserve the original directory separately
+until the restored instance has been verified. (Individual
 users can also export their own data as JSON from Settings → Data & backup.)
 
 The photos and videos of custom exercises are in `data/uploads/`, and they are most of what makes
 the archive large. To leave them out:
 
 ```bash
+docker compose stop api
 tar czf opengym-backup-$(date +%F).tar.gz --exclude=data/uploads data/
+tar tzf opengym-backup-$(date +%F).tar.gz
+docker compose start api
 ```
 
 Restored without them, every profile is intact, and an exercise whose file is gone shows a
 placeholder until one of its owner's devices — each keeps its own copy — uploads it again. When
 you move openGym to another server, copy the whole `data/`, `uploads/` included; each person can
 also carry their own through Settings → Data & backup → *Export with photos & videos* and import it there.
+
+Profiles now live in `profiles.sqlite`, using WAL and full synchronous commits. Never
+copy just that file while the API is running, or delete its `-wal`/`-shm` files by hand.
+Use a local filesystem supporting SQLite file locks; do not place this database on a
+shared network filesystem or run an old JSON-writing API against the same directory.
+An online backup must use SQLite's backup API and coordinate the other mutable data;
+the offline archive above is the supported whole-service backup procedure.
+
+On first startup of this fork, stop the old API and make the full backup above before
+upgrading. Startup verifies and privately backs up registered users' legacy JSON,
+imports all profiles and a migration marker in one SQL transaction, then retires the
+old files under `legacy-profile-backup-<id>/retired/`. Invalid or orphaned profiles
+stop startup rather than being dropped. A committed import is not rerun; interrupted
+retirement resumes without changing imported revisions. A database failure never
+falls back to the retired JSON. Do not roll back to the old image against migrated
+data: restore the complete pre-upgrade backup into a separate directory instead.
+
+Migration backups contain historical data, including account metadata. Live account
+deletion removes the SQL profile, integration records and media, but does not rewrite
+immutable operator backups. Apply a deliberate backup retention policy and protect
+all archives as sensitive data. If an event-connected instance is restored later,
+pause delivery and reconcile the peer's revisions before resuming synchronization.
 
 If you enabled the AI Coach with the Codex provider, note what this archive deliberately does
 **not** contain: `./coach-auth`, where that provider keeps its refreshable sign-in. It is a

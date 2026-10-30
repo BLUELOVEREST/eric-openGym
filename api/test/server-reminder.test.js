@@ -1,3 +1,4 @@
+import { readProfile, writeProfile } from './profile-fixture.mjs';
 /* Two halves of the same rule — a state whose `workouts` or `routines` is not an array must not
    be able to take the api down:
    - PUT /api/data refuses the shape at the door (every real client sends arrays or leaves the
@@ -53,14 +54,13 @@ async function startServer(t, subs = []) {
 test('PUT /api/data refuses a state whose workouts or routines is not an array', async t => {
   const h = await startServer(t);
   const put = state => fetch(`${h.api}/api/data`, { method: 'PUT', headers: { ...cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ state }) });
-  const file = path.join(h.dataDir, 'state-u_test_1.json');
 
   for (const bad of [{ workouts: {} }, { workouts: 'abc' }, { workouts: 7 }, { workouts: true }, { routines: {} }, { routines: 'r1' }, { workouts: [], routines: {} }]) {
     const r = await put({ _ts: 1, ...bad });
     assert.equal(r.status, 400, JSON.stringify(bad));
     assert.deepEqual(await r.json(), { error: 'invalid state' }, JSON.stringify(bad));
   }
-  assert.equal(fs.existsSync(file), false, 'nothing landed on disk');
+  assert.equal(Boolean(readProfile(h.dataDir, 'u_test_1')), false, 'nothing landed on disk');
 
   // the shapes real clients send still go through: arrays, the field left out, or null.
   // (Something of the profile has to be in there — a document that is only `_ts`/`_rev` is the
@@ -68,7 +68,7 @@ test('PUT /api/data refuses a state whose workouts or routines is not an array',
   assert.equal((await put({ _ts: 2, workouts: [], routines: [] })).status, 200);
   assert.equal((await put({ _ts: 3, unit: 'kg' })).status, 200);
   assert.equal((await put({ _ts: 4, workouts: null, routines: null })).status, 200);
-  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8'))._ts, 4);
+  assert.equal(readProfile(h.dataDir, 'u_test_1')._ts, 4);
 });
 
 test('a non-array workouts on disk is logged and skipped by the reminder tick; the next user still fires', async t => {
@@ -86,13 +86,13 @@ test('a non-array workouts on disk is logged and skipped by the reminder tick; t
     const g = type => parts.find(p => p.type === type)?.value;
     return `${g('hour')}:${g('minute')}`;
   };
-  // The tick re-reads each state file every pass and only acts when the reminder is for the
-  // current minute, so both files are rewritten with "now" until the log shows the tick has done
+  // The tick checks each profile revision every pass and only acts when the reminder is for the
+  // current minute, so both profiles are committed with "now" until the log shows the tick has done
   // its work — a minute rolling over mid-wait cannot make it miss.
   const seed = () => {
     const reminder = { on: true, time: nowHHMM(), tz: 'UTC' };
-    fs.writeFileSync(path.join(h.dataDir, 'state-u_test_1.json'), JSON.stringify({ reminder, routines, week, workouts: {} }));
-    fs.writeFileSync(path.join(h.dataDir, 'state-u_test_2.json'), JSON.stringify({ reminder, routines, week, workouts: [] }));
+    writeProfile(h.dataDir, 'u_test_1', { reminder, routines, week, workouts: {} });
+    writeProfile(h.dataDir, 'u_test_2', { reminder, routines, week, workouts: [] });
   };
   const done = () => /reminder tick u_test_1/.test(h.log) && /reminder firing u_test_2 r1/.test(h.log);
   const deadline = Date.now() + 30000;
@@ -118,7 +118,7 @@ const hhmmMinusMinutes = m => {
   const g = type => parts.find(p => p.type === type)?.value;
   return { hhmm: `${g('hour')}:${g('minute')}`, sameDay: d.getUTCDate() === new Date().getUTCDate() };
 };
-const goodState = (time, over = {}) => JSON.stringify({
+const goodState = (time, over = {}) => ({
   reminder: { on: true, time, tz: 'UTC' },
   routines: [{ id: 'r1', name: 'Full body', emoji: '💪', ex: [] }],
   week: { 0: 'r1', 1: 'r1', 2: 'r1', 3: 'r1', 4: 'r1', 5: 'r1', 6: 'r1' },
@@ -132,7 +132,7 @@ test('a reminder whose minute passed 3 minutes ago still fires — once', async 
   const late = hhmmMinusMinutes(3);
   if (!late.sameDay) return t.skip('just after midnight UTC — a same-day window cannot be set up');
   const h = await startServer(t, [sub]);
-  fs.writeFileSync(path.join(h.dataDir, 'state-u_test_1.json'), goodState(late.hhmm));
+  writeProfile(h.dataDir, 'u_test_1', goodState(late.hhmm));
   const deadline = Date.now() + 30000;
   while (Date.now() < deadline && !firings(h.log)) await wait(300);
   assert.equal(firings(h.log), 1, h.log);
@@ -148,17 +148,16 @@ test('a reminder 20 minutes past is not delivered late, and a day already traine
   const late = hhmmMinusMinutes(2);
   if (!stale.sameDay || !late.sameDay) return t.skip('just after midnight UTC — a same-day window cannot be set up');
   const h = await startServer(t, [sub]);
-  const file = path.join(h.dataDir, 'state-u_test_1.json');
-  fs.writeFileSync(file, goodState(stale.hhmm));
+  writeProfile(h.dataDir, 'u_test_1', goodState(stale.hhmm));
   await wait(1500);   // several ticks
   assert.equal(firings(h.log), 0, `20 minutes late must stay silent:\n${h.log}`);
   // inside the window but today's workout is already logged
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-  fs.writeFileSync(file, goodState(late.hhmm, { workouts: [{ id: 'w1', d: today }] }));
+  writeProfile(h.dataDir, 'u_test_1', goodState(late.hhmm, { workouts: [{ id: 'w1', d: today }] }));
   await wait(1500);
   assert.equal(firings(h.log), 0, `a trained day must stay silent:\n${h.log}`);
   // inside the window, nothing logged, but today carries a day note (#261): excused, silent
-  fs.writeFileSync(file, goodState(late.hhmm, { dayNotes: { [today]: { tag: 'sick', _ts: 1 } } }));
+  writeProfile(h.dataDir, 'u_test_1', goodState(late.hhmm, { dayNotes: { [today]: { tag: 'sick', _ts: 1 } } }));
   await wait(1500);
   assert.equal(firings(h.log), 0, `a day noted as sick must stay silent:\n${h.log}`);
 });
@@ -172,7 +171,7 @@ test('a null entry in workouts or routines does not cost that profile its remind
   const late = hhmmMinusMinutes(2);
   if (!late.sameDay) return t.skip('just after midnight UTC — a same-day window cannot be set up');
   const h = await startServer(t, [sub]);
-  fs.writeFileSync(path.join(h.dataDir, 'state-u_test_1.json'), goodState(late.hhmm, {
+  writeProfile(h.dataDir, 'u_test_1', goodState(late.hhmm, {
     workouts: [null, { id: 'w1', d: '2026-01-01' }],
     routines: [null, { id: 'r1', name: 'Full body', emoji: '💪', ex: [] }]
   }));
@@ -185,15 +184,14 @@ test('a null entry in workouts or routines does not cost that profile its remind
 // The tick keeps a few bytes per user and reads a whole state only while a window is open and
 // something could still be sent. "Nothing owed today" is remembered for the file as it is, so a
 // change to the file (here: a rest day turned into a training day) has to be read again.
-test('a day that owed nothing is asked again once the state file changes', async t => {
+test('a day that owed nothing is asked again once the SQL profile revision changes', async t => {
   const late = hhmmMinusMinutes(2);
   if (!late.sameDay) return t.skip('just after midnight UTC — a same-day window cannot be set up');
   const h = await startServer(t, [sub]);
-  const file = path.join(h.dataDir, 'state-u_test_1.json');
-  fs.writeFileSync(file, goodState(late.hhmm, { week: {} }));
+  writeProfile(h.dataDir, 'u_test_1', goodState(late.hhmm, { week: {} }));
   await wait(1500);
   assert.equal(firings(h.log), 0, `a rest day stays silent:\n${h.log}`);
-  fs.writeFileSync(file, goodState(late.hhmm));
+  writeProfile(h.dataDir, 'u_test_1', goodState(late.hhmm));
   const deadline = Date.now() + 10000;
   while (Date.now() < deadline && !firings(h.log)) await wait(300);
   assert.equal(firings(h.log), 1, h.log);
@@ -208,7 +206,7 @@ test('a disabled profile gets no reminder', async t => {
   h.child.kill('SIGKILL');
   db.users[0].disabled = true;
   fs.writeFileSync(path.join(h.dataDir, 'db.json'), JSON.stringify(db));
-  fs.writeFileSync(path.join(h.dataDir, 'state-u_test_1.json'), goodState(late.hhmm));
+  writeProfile(h.dataDir, 'u_test_1', goodState(late.hhmm));
   const child = spawn(process.execPath, ['server.js'], {
     cwd: API, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, PORT: '0', DATA_DIR: h.dataDir, ORIGIN: 'http://localhost:8080', RP_ID: 'localhost', REMINDER_TICK_MS: '300' }

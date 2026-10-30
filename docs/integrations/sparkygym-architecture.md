@@ -24,9 +24,12 @@ Decisions: `2026-10-29-opengym-integration-decisions.md`.
 
 SparkyFitness owns body measurements, custom measurement definitions and target
 weight. openGym holds read-only projections. Weekly weight-rate targets are excluded.
-openGym owns exercise identities, routines, fixed-week schedules and training
-results. SparkyFitness holds training snapshots and a minimal read-only nutrition
-schedule. AI suggestions do not change the other system before user acceptance.
+SparkyFitness also owns dated weekly training intent (focus, time bucket, main and
+rest) and its carb-cycle/meals. openGym receives note-style daily hints without
+requiring routine creation. openGym owns exercise identities, reusable routines
+and actual training results; SparkyFitness archives those results. Multiple actual
+workouts on one day remain independent and never reference a planned session.
+AI suggestions do not change the other system before user acceptance.
 Personal workout media and day progress photos originate in openGym and are archived
 in SparkyFitness. Equipment inventories, membership cards, AI transcripts, credentials,
 UI settings and active workout drafts do not cross the boundary.
@@ -61,13 +64,18 @@ SparkyFitness adds owner-only connections, outbox, inbox and external-entity map
 through normal migrations, shared Zod database schemas, RLS and security-tier docs.
 Never use the existing production database for development migration tests.
 
-openGym retains JSON storage. Store private integration metadata, entity revision
-markers, inbox and outbox alongside business state in one atomically replaced profile
-document. All writers for that profile share the existing serialized write boundary.
-Never store secrets in the public state returned by GET /api/data or phone backups.
-Account deletion, administrative restore and reset must use the same integration
-boundary; a second JSON file written after the profile is not an atomic outbox.
-Evaluate retained inbox/outbox compaction with unacknowledged items never discarded.
+openGym uses native SQLite transactions for profile business state and separate
+connection, entity-stream, outbox and inbox tables. No hidden integration journal
+is embedded in public profile JSON. Profile changes and outgoing events commit in
+one SQL transaction; incoming projections and receipts likewise commit together.
+All profile writers must use this store before integration endpoints are enabled.
+Existing JSON profiles use an explicit, validated one-time migration with backups;
+there is no runtime file fallback, dual-write or second source of truth. SQLite
+replaces business-state files rather than merely storing a queue beside them.
+Authentication storage conversion is not required for training sync, but account
+deletion must revoke connections and remove associated SQL data. Keys and queue
+metadata must never appear in public state or mobile backups. Retention preserves
+unacknowledged events and entity revision high-watermarks.
 
 ### Projection Protection
 
@@ -107,8 +115,11 @@ streaming byte limits, MIME inspection and hash verification.
   bodyweight/assistance and single-bell semantics. Store lossless provider snapshots
   when native fields cannot represent data. Source revisions drive changes/deletes.
   Both existing exercise stats and diary cache families must be invalidated.
-- Schedule: fixed-week summary with explicit timezone, weekday convention, effective
-  dates, slot and main marker. Template edits do not automatically change nutrition.
+- Schedule: SF-produced fixed-week metadata with explicit timezone, weekday convention,
+  effective dates, native time buckets and main. OG displays daily hints, including
+  future dates, separately from personal notes and native routine assignments.
+  Hints do not excuse missed workouts or affect reminders. Actual workout IDs serve
+  replay/update/delete only, not planned-session matching. No meal-source picker.
 - Media: event references owner-authorized content hashes, not arbitrary URLs. Upload
   bytes separately, acknowledge archive readiness separately, dedupe by owner/hash.
   Remove associations independently from file garbage collection. No catalogue media.

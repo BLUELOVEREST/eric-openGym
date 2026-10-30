@@ -1,6 +1,9 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
+import { useBodyState } from '../store/useBodyState.js'
+import { bodyReadOnly } from '../lib/sparkygym-client.js'
+import BodySource from '../components/BodySource.jsx'
 import { useUI } from '../store/useUI.js'
 import {
   MEASUREMENT_FIELDS, MEASUREMENT_KEYS, emptyMeasurement, enabledMeasurementFields,
@@ -17,16 +20,17 @@ import { Button, NumberField, Section, Segmented, SelectRow, Switch, TextField }
 import { confirmSheet } from '../sheets.jsx'
 
 // Every write leaves the list in its one-entry-per-day shape (normalizeMeasurementsState).
-const update = (fn, ...rest) => useStore.getState().update(s => { fn(s); normalizeMeasurementsState(s) }, ...rest)
+const update = (fn, ...rest) => { if (!bodyReadOnly()) useStore.getState().update(s => { fn(s); normalizeMeasurementsState(s) }, ...rest) }
 const toast = message => useUI.getState().toast(message)
 
 // The label after a number: empty for a unitless field (#718).
 const fieldUnit = (field, profileUnit) => measurementUnitLabel(measurementUnit(profileUnit, field))
 const unitOptions = units => units.map(value => ({ value, label: value === 'none' ? t('No unit') : value }))
-const withUnit = (value, unit) => unit ? fmtNum(value) + ' ' + unit : fmtNum(value)
+const withUnit = (value, unit) => typeof value === 'string' ? value : unit ? fmtNum(value) + ' ' + unit : fmtNum(value)
 const shownValue = (entry, field, profileUnit) => {
   const value = measurementValue(entry, field.key)
   if (value == null) return null
+  if (typeof value === 'string') return value
   return toMeasurementDisplay(value, profileUnit, field)
 }
 
@@ -110,6 +114,7 @@ function MeasurementLog({ sourceDate, close }) {
 }
 
 export function measurementLogSheet(sourceDate = null) {
+  if (bodyReadOnly()) return
   return useUI.getState().openSheet(close => <MeasurementLog sourceDate={sourceDate} close={close} />)
 }
 
@@ -175,12 +180,13 @@ function ManageMeasurements({ close }) {
 }
 
 export function manageMeasurementsSheet() {
+  if (bodyReadOnly()) return
   return useUI.getState().openSheet(close => <ManageMeasurements close={close} />)
 }
 
 export default function Measurements() {
   const nav = useNavigate()
-  const S = useStore(s => s.S)
+  const S = useBodyState()
   const [range, setRange] = useState(90)
   const available = useMemo(() => {
     const out = enabledMeasurementFields(S)
@@ -213,10 +219,11 @@ export default function Measurements() {
   })
 
   return <div className="narrow">
+    <BodySource />
     <div className="hdr">
       <button className="iconbtn" data-back="/stats" onClick={() => nav('/stats')} aria-label={t('Stats')}><Icon name="chevronLeft" /></button>
       <div style={{ flex: 1, marginInlineStart: 12 }}><h1>{t('Body measurements')}</h1><div className="sub">{t('Circumference & composition')}</div></div>
-      <button className="iconbtn" onClick={manageMeasurementsSheet} aria-label={t('Choose measurements')}><Icon name="gear" /></button>
+      {!bodyReadOnly() && <button className="iconbtn" onClick={manageMeasurementsSheet} aria-label={t('Choose measurements')}><Icon name="gear" /></button>}
     </div>
 
     <div className="card">
@@ -226,7 +233,7 @@ export default function Measurements() {
           <div className="big" style={{ marginTop: 3 }}>{latest ? <>{fmtNum(latest.y)} <span className="muted" style={{ fontSize: '1rem' }}>{unit}</span></> : '–'}</div>
           {delta != null && delta !== 0 && <div className="small" style={{ marginTop: 3, color: 'var(--label-2)' }}>{delta > 0 ? '+' : ''}{withUnit(delta, unit)} {t('since previous')}</div>}
         </div>
-        <Button size="sm" icon="plus" onClick={() => measurementLogSheet()}>{t('Log')}</Button>
+        {!bodyReadOnly() && <Button size="sm" icon="plus" onClick={() => measurementLogSheet()}>{t('Log')}</Button>}
       </div>
       {available.length > 0 && <div className="sect-b measure-select"><SelectRow
         title={t('Measurement')} sheetTitle={t('Choose measurement')} value={key} onChange={setSelected}
@@ -237,14 +244,14 @@ export default function Measurements() {
       <div className="chart"><LineChart points={points} h={170} unit={unit} color="var(--teal)" /></div>
     </div>
 
-    {!available.length && <div className="card">
+    {!available.length && !bodyReadOnly() && <div className="card">
       <div className="muted small">{t('Choose the measurements you want to track, then log your first check-in.')}</div>
       <div style={{ height: 10 }} /><Button onClick={manageMeasurementsSheet}>{t('Choose measurements')}</Button>
     </div>}
 
     <div className="row between" style={{ margin: '18px 2px 10px' }}>
       <h4 className="sec" style={{ margin: 0 }}>{t('Measurement history')}</h4>
-      <Button size="sm" variant="ghost" icon="gear" onClick={manageMeasurementsSheet}>{t('Fields')}</Button>
+      {!bodyReadOnly() && <Button size="sm" variant="ghost" icon="gear" onClick={manageMeasurementsSheet}>{t('Fields')}</Button>}
     </div>
     {recent.length ? <div className="list">{recent.map(entry => {
       const count = MEASUREMENT_KEYS.filter(k => entry[k] != null).length + (entry.other || []).filter(o => o.value != null).length
@@ -252,10 +259,10 @@ export default function Measurements() {
       return <div className="card measure-history" key={entry.d}>
         <div className="row between">
           <div><b>{fmtDate(entry.d, true)}</b><div className="small dim" style={{ marginTop: 2 }}>{t(count === 1 ? '{0} measurement' : '{0} measurements', count)}</div></div>
-          <div className="row" style={{ gap: 4 }}>
+          {!bodyReadOnly() && <div className="row" style={{ gap: 4 }}>
             <button className="iconbtn" onClick={() => measurementLogSheet(entry.d)} aria-label={t('Edit')}><Icon name="pencil" /></button>
             <button className="iconbtn" style={{ color: 'var(--red)' }} onClick={() => remove(entry)} aria-label={t('Delete')}><Icon name="trash" /></button>
-          </div>
+          </div>}
         </div>
         {previewFields.length > 0 && <div className="measure-preview">{previewFields.map(({ field: f, value }) => <span key={f.key}>{t(f.label)} <b>{withUnit(value, fieldUnit(f, S.unit))}</b></span>)}</div>}
       </div>

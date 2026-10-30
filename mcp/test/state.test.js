@@ -1,135 +1,167 @@
-// Tests for mcp/src/state.js — the uid/config resolution and what a read failure looks like.
-// state.js reads OPENGYM_DATA at module load and caches module-globally, so each case stubs the
-// env and imports a fresh copy. Temp dirs only; nothing here touches a real profile.
-import { describe, test, expect, afterEach, afterAll, vi } from 'vitest'
+import { describe, test, expect, afterEach, vi } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
-const DB = JSON.stringify({
-  users: [{ id: 'alex', name: 'Alex', created: '2026-01-01' }],
-  creds: [], subs: [], invites: []
-})
-const DB_MANY = JSON.stringify({
-  users: [
-    { id: 'alex', name: 'Alex', created: '2026-01-01' },
-    { id: 'secret-partner-uid', name: 'Someone Else', created: '2026-02-02' },
-    { id: 'third-account', name: 'Third', created: '2026-03-03' }
-  ],
-  creds: [], subs: [], invites: []
-})
-
-const dirs = []
-function mk(files) {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-state-'))
-  dirs.push(d)
-  for (const [f, body] of Object.entries(files)) {
-    if (body === null) fs.mkdirSync(path.join(d, f))            // a directory where a file belongs
-    else fs.writeFileSync(path.join(d, f), body)
-  }
-  return d
+const dirs = [], writers = [], modules = []
+const users = [{ id: 'alex', name: 'Alex', created: '2026-01-01' }, { id: 'private-partner', name: 'Partner' }]
+function fixture(profiles = [['alex', 1, { unit: 'lb' }]], accounts = users.slice(0, 1)) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sparkygym-acceptance-mcp-state-'))
+  dirs.push(dir)
+  fs.writeFileSync(path.join(dir, 'db.json'), JSON.stringify({ users: accounts, creds: ['secret'], subs: ['secret'] }))
+  const db = new DatabaseSync(path.join(dir, 'profiles.sqlite'))
+  writers.push(db)
+  db.exec('PRAGMA user_version=1; CREATE TABLE profiles(owner_id TEXT PRIMARY KEY,revision INTEGER,state TEXT); CREATE TABLE storage_metadata(key TEXT PRIMARY KEY,value TEXT);')
+  db.prepare('INSERT INTO storage_metadata VALUES (?,?)').run('json_profiles_import_v1', '{"complete":true}')
+  for (const [uid, rev, state] of profiles) db.prepare('INSERT INTO profiles VALUES (?,?,?)').run(uid, rev, JSON.stringify(state))
+  return { dir, db }
 }
-
-// A fresh state.js bound to `dir`.
 async function load(dir, uid = 'alex') {
   vi.resetModules()
   vi.stubEnv('OPENGYM_DATA', dir)
   vi.stubEnv('OPENGYM_UID', uid)
-  return import('../src/state.js')
+  const mod = await import('../src/state.js')
+  modules.push(mod)
+  return mod
 }
-
-afterEach(() => { vi.unstubAllEnvs() })
-afterAll(() => { dirs.forEach(d => fs.rmSync(d, { recursive: true, force: true })) })
-
-describe('a read failure is not "you never signed in"', () => {
-  test('without a watcher, a state file that goes away stops being served from the cache (#653)', async () => {
-    const dir = mk({ 'db.json': DB, 'state-alex.json': JSON.stringify({ unit: 'lb' }) })
-    const watch = vi.spyOn(fs, 'watch').mockImplementation(() => { throw new Error('no fs.watch here') })
-    try {
-      const { getState } = await load(dir)
-      expect(getState().unit).toBe('lb')
-      fs.rmSync(path.join(dir, 'state-alex.json'))
-      expect(getState()).toBeNull()
-      fs.writeFileSync(path.join(dir, 'state-alex.json'), JSON.stringify({ unit: 'kg' }))
-      expect(getState().unit).toBe('kg')
-    } finally { watch.mockRestore() }
-  })
-
-  test('no state file at all is still null — that account really has never synced', async () => {
-    const { getState } = await load(mk({ 'db.json': DB }))
-    expect(getState()).toBeNull()
-  })
-
-  test('a corrupt state file throws EIO naming the parse failure', async () => {
-    const { getState } = await load(mk({ 'db.json': DB, 'state-alex.json': '{ not json' }))
-    let err = null
-    try { getState() } catch (e) { err = e }
-    expect(err).toBeTruthy()
-    expect(err.code).toBe('EIO')
-    expect(err.message).toMatch(/state-alex\.json is not valid JSON/)
-    expect(err.message).not.toMatch(/sign in/i)
-  })
-
-  test('a state file that cannot be read throws EIO naming the failure, not null', async () => {
-    const { getState } = await load(mk({ 'db.json': DB, 'state-alex.json': null }))
-    let err = null
-    try { getState() } catch (e) { err = e }
-    expect(err).toBeTruthy()
-    expect(err.code).toBe('EIO')
-    expect(err.message).toMatch(/cannot read state-alex\.json: EISDIR/)
-  })
-
-  // Root reads a mode-000 file anyway (the GitLab CI container runs as root), so the failure this
-  // needs cannot be made there.
-  const asRoot = typeof process.getuid === 'function' && process.getuid() === 0
-  test.skipIf(asRoot)('a permission failure names the file, not the server\'s path', async () => {
-    const dir = mk({ 'db.json': DB, 'state-alex.json': '{}' })
-    fs.chmodSync(path.join(dir, 'state-alex.json'), 0o000)
-    const { getState } = await load(dir)
-    let err = null
-    try { getState() } catch (e) { err = e }
-    fs.chmodSync(path.join(dir, 'state-alex.json'), 0o600)
-    expect(err).toBeTruthy()
-    expect(err.code).toBe('EIO')
-    expect(err.message).toMatch(/cannot read state-alex\.json: EACCES/)
-    expect(err.message).not.toContain(dir)
-  })
-
-  test('a good state file still loads, with the app defaults merged in', async () => {
-    const { getState } = await load(mk({ 'db.json': DB, 'state-alex.json': JSON.stringify({ unit: 'lb', routines: [{ id: 'r1', name: 'R', ex: [] }] }) }))
-    const S = getState()
-    expect(S.unit).toBe('lb')
-    expect(S.routines.length).toBe(1)
-    expect(S.dayPlan).toEqual({})     // a default the snapshot did not carry
-  })
+afterEach(() => {
+  for (const mod of modules.splice(0)) mod._seedStateForTests(null)
+  for (const db of writers.splice(0)) db.close()
+  for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true })
+  vi.unstubAllEnvs(); vi.restoreAllMocks()
 })
 
-describe('the "which profile?" error is a config message, not a roster', () => {
-  const uids = ['alex', 'secret-partner-uid', 'third-account']
-
-  // Several state files, and several users with no state file, resolve the uid the same way.
-  for (const [label, files] of [
-    ['several state files', Object.fromEntries([['db.json', DB_MANY], ...uids.map(u => [`state-${u}.json`, '{}'])])],
-    ['several users, none synced yet', { 'db.json': DB_MANY }]
-  ]) {
-    test(`${label}: names no uid and no absolute path`, async () => {
-      const logs = []
-      const spy = vi.spyOn(console, 'error').mockImplementation((...a) => logs.push(a.join(' ')))
-      const dir = mk(files)
-      const { getState } = await load(dir, '')       // no OPENGYM_UID pinned
-      let err = null
-      try { getState() } catch (e) { err = e }
-      spy.mockRestore()
-      expect(err).toBeTruthy()
-      expect(err.code).toBe('EINVAL')
-      expect(err.message).toMatch(/holds 3 profiles/)
-      expect(err.message).toMatch(/set OPENGYM_UID/)
-      for (const u of uids) expect(err.message).not.toContain(u)
-      expect(err.message).not.toContain(dir)
-      expect(err.message).not.toContain('/')
-      // the operator still gets the detail, on the server's own log
-      expect(logs.join('\n')).toContain(dir)
-      for (const u of uids) expect(logs.join('\n')).toContain(u)
+describe('native read-only state', () => {
+  function pairedFixture() {
+    const result = fixture([['alex', 7, { unit: 'kg', _rev: 3, bodyweight: [], targetW: null }]])
+    result.db.exec(`PRAGMA user_version=10;
+      CREATE TABLE body_sources(owner_id TEXT PRIMARY KEY, source_id TEXT, connection_id TEXT, revision INTEGER);
+      CREATE TABLE body_entities(owner_id TEXT, source_id TEXT, resource TEXT, entity_id TEXT, payload TEXT);
+      INSERT INTO body_sources VALUES ('alex','sf','conn',1);`)
+    const insert = result.db.prepare('INSERT INTO body_entities VALUES (?,?,?,?,?)')
+    insert.run('alex', 'sf', 'body_measurement', 'weight-1', JSON.stringify({ metric_id: 'weight', date: '2026-10-29', value: 81, unit: 'kg' }))
+    insert.run('alex', 'sf', 'body_measurement', 'unknown-1', JSON.stringify({ metric_id: 'source_metric', date: '2026-10-29', value: 12, unit: 'widgets', definition: { label: 'Source original name', value_type: 'number', builtin: false } }))
+    insert.run('alex', 'sf', 'body_goal', 'goal', JSON.stringify({ value: 75 }))
+    return result
+  }
+  test('paired canonical body replaces archived empty profile fields', async () => {
+    const { dir } = pairedFixture()
+    const state = (await load(dir)).getState()
+    expect(state.bodyweight).toEqual([{ id: 'weight-1', d: '2026-10-29', w: 81 }])
+    expect(state.targetW).toBe(75)
+    expect(state._rev).toBe(3)
+    expect(state.measurements[0].other[0]).toMatchObject({ name: 'Source original name', unit: 'widgets', value: 12 })
+  })
+  test('body-only correction invalidates cache without changing profile revision or source names and units', async () => {
+    const { dir, db } = pairedFixture()
+    const mod = await load(dir)
+    const first = mod.getState()
+    expect(mod.getState()).toBe(first)
+    db.prepare("UPDATE body_entities SET payload=json_set(payload,'$.value',14) WHERE entity_id='unknown-1'").run()
+    db.exec('UPDATE body_sources SET revision=2')
+    const corrected = mod.getState()
+    expect(corrected).not.toBe(first)
+    expect(corrected.measurements[0].other[0]).toMatchObject({ name: 'Source original name', unit: 'widgets', value: 14 })
+    expect(corrected.customMeasurements[0]).toMatchObject({ name: 'Source original name', unit: 'widgets' })
+    expect(corrected._rev).toBe(3)
+    expect(db.prepare('SELECT revision FROM profiles').get().revision).toBe(7)
+    db.exec("UPDATE body_sources SET connection_id='replacement'")
+    const reconnected = mod.getState()
+    expect(reconnected).not.toBe(corrected)
+    db.exec('DELETE FROM body_sources')
+    expect(mod.getState().bodyweight).toEqual([])
+  })
+  test('merges defaults, caches by revision, sees writes and deletes', async () => {
+    const { dir, db } = fixture()
+    db.prepare('UPDATE profiles SET state=?').run('{"unit":"lb","_rev":5}')
+    const mod = await load(dir)
+    const first = mod.getState()
+    expect(first.unit).toBe('lb')
+    expect(first.dayPlan).toEqual({})
+    expect(mod.getState()).toBe(first)
+    db.prepare('UPDATE profiles SET revision=2,state=?').run('{"unit":"kg","_rev":5}')
+    expect(mod.getState().unit).toBe('kg')
+    expect(mod.getState()._rev).toBe(5) // Public sync revisions are not SQL cache revisions.
+    db.exec('DELETE FROM profiles')
+    expect(mod.getState()).toBeNull()
+    db.prepare('INSERT INTO profiles VALUES (?,?,?)').run('alex', 3, '{"unit":"lb"}')
+    expect(mod.getState().unit).toBe('lb')
+  })
+  test('fresh account returns null only in a ready database', async () => {
+    const { dir } = fixture([])
+    expect((await load(dir)).getState()).toBeNull()
+  })
+  test('missing database refuses legacy files without creating SQL storage', async () => {
+    const { dir, db } = fixture([])
+    db.close(); writers.pop()
+    fs.rmSync(path.join(dir, 'profiles.sqlite'))
+    fs.writeFileSync(path.join(dir, 'state-alex.json'), '{"unit":"lb"}')
+    const mod = await load(dir)
+    expect(() => mod.getState()).toThrow(/profiles.sqlite/)
+    expect(fs.existsSync(path.join(dir, 'profiles.sqlite'))).toBe(false)
+  })
+  test('malformed state fails closed and clears cached state', async () => {
+    const { dir, db } = fixture()
+    const mod = await load(dir)
+    mod.getState()
+    db.prepare('UPDATE profiles SET revision=2,state=?').run('private malformed JSON')
+    expect(() => mod.getState()).toThrow(/profiles.sqlite/)
+    db.prepare('UPDATE profiles SET state=?').run('{"unit":"kg"}')
+    expect(mod.getState().unit).toBe('kg')
+  })
+  test('marker removal refuses even cached state', async () => {
+    const { dir, db } = fixture()
+    const mod = await load(dir)
+    mod.getState()
+    db.exec('DELETE FROM storage_metadata')
+    expect(() => mod.getState()).toThrow(/profiles.sqlite/)
+  })
+  test('user metadata stays private and independent of profiles', async () => {
+    const { dir } = fixture()
+    const mod = await load(dir)
+    expect(mod.getUser()).toEqual(users[0])
+    expect(mod.localUid()).toBe('alex')
+  })
+  test('seeded states never open storage', async () => {
+    const mod = await load('/missing-test-directory')
+    mod._seedStateForTests({ unit: 'kg' })
+    expect(mod.getState()).toEqual({ unit: 'kg' })
+    mod._seedStateForTests(null)
+    expect(mod.getState()).toBeNull()
+  })
+  test('single SQL profile is selected without scanning legacy files', async () => {
+    const { dir } = fixture()
+    fs.writeFileSync(path.join(dir, 'state-other.json'), '{}')
+    expect((await load(dir, '')).localUid()).toBe('alex')
+  })
+  test('remote-only identity needs no database, but explicit broken local data fails closed', async () => {
+    const { dir } = fixture([])
+    vi.spyOn(process, 'cwd').mockReturnValue(dir)
+    vi.resetModules()
+    vi.stubEnv('OPENGYM_DATA', '')
+    vi.stubEnv('OPENGYM_UID', '')
+    const remote = await import('../src/state.js')
+    expect(remote.localUid()).toBeNull()
+    expect(() => remote.getState()).toThrow(/profiles.sqlite/)
+    const explicit = await load(path.join(dir, 'missing'), '')
+    expect(() => explicit.localUid()).toThrow(/profiles.sqlite/)
+    const pinned = await load(path.join(dir, 'missing'), 'alex')
+    expect(pinned.localUid()).toBe('alex')
+    expect(() => pinned.getState()).toThrow(/profiles.sqlite/)
+  })
+  for (const profiles of [[], users.map(u => [u.id, 1, {}])]) {
+    test(`ambiguity discloses roster only on stderr (${profiles.length} synced)`, async () => {
+      const { dir } = fixture(profiles, users)
+      const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const mod = await load(dir, '')
+      let error
+      try { mod.getState() } catch (e) { error = e }
+      expect(error.code).toBe('EINVAL')
+      expect(error.message).toContain('holds 2 profiles')
+      expect(error.message).not.toContain(dir)
+      expect(error.message).not.toContain('private-partner')
+      expect(log.mock.calls.flat().join(' ')).toContain('private-partner')
     })
   }
 })

@@ -245,7 +245,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <p class="api-facts">
     <span>OpenAPI 3.1.0</span>
     <span>openGym v1.4.3</span>
-    <span>75 endpoints</span>
+    <span>95 endpoints</span>
     <span>AGPL-3.0-or-later</span>
   </p>
 
@@ -1514,6 +1514,454 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <h2>Data</h2>
   <p class="sub">Per-user state sync (the whole app state as one JSON blob)</p>
   <div class="eps">
+
+<details class="ep" id="op-undefined">
+  <summary>
+    <span class="m get">GET</span>
+    <span class="ep-path"><code>/api/training-hints</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Read the owner's SF-produced training hints</span>
+  </summary>
+  <div class="ep-body">
+<p>Cookie or bearer owner authentication required. Omit date to read all retained source metadata for offline calendar resolution (date is null). A supplied calendar date filters by inclusive effective range. Hints are separate from profile state, private day notes, assignments and completed workouts. Revocation retains hints until explicit source purge. Refresh from native SSE, focus or reconnect, never polling.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+<p class="ep-h">Query parameters</p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">date</span>
+    <span class="p-type">string <span class="p-hint">(date)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Owner-isolated native hint metadata<span class="r-sig">{ revision: integer <span class="p-hint">(0&ndash;)</span>, date: string | null <span class="p-hint">(date)</span>, hints: <a href="#schema-TrainingHint">TrainingHint</a>[] }</span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">Invalid calendar date or unsupported query parameter</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">Session required</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-undefined">
+  <summary>
+    <span class="m get">GET</span>
+    <span class="ep-path"><code>/api/body/profile</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Read the owner's native source-managed body projection</span>
+  </summary>
+  <div class="ep-body">
+<p>Cookie or bearer session required. Measurements retain every source entity and its historical definition snapshot. Values use canonical kg, cm, percent, none or text. Revocation retains read-only history.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Native body read model<span class="r-sig">{ managed: boolean, connection_id: string | null <span class="p-hint">(uuid)</span>, source: &quot;sparkyfitness&quot; | null, revision: integer <span class="p-hint">(0&ndash;)</span>, definitions: object[], measurements: object[], target: object | null }</span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">Session required</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-undefined">
+  <summary>
+    <span class="m get">GET</span>
+    <span class="ep-path"><code>/api/integrations/sparkygym</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">List the signed-in owner's public integration status</span>
+  </summary>
+  <div class="ep-body">
+<p>Returns connections only. Credentials, invitation secrets, queue payloads and other owners are never returned.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Object with connections array; each connection includes connection_id, status, peer_origin, peer_owner_ref, scopes, include_history, affected_record_counts, capabilities and delivery. Delivery contains actual pending, failed, pending_media counts, last_success_at and a sanitized last_error_code.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">Session required</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-undefined">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/integrations/sparkygym/claim</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Claim a ten-minute SparkyFitness invitation</span>
+  </summary>
+  <div class="ep-body">
+<p>The body is exactly invitation, allow_http and allow_private_network. Both network permissions require independent explicit owner opt-in. The configured server ORIGIN supplies og_origin. Claim remains pending until the original SF owner approves. Returns connection, never credentials.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">invitation<em class="p-req" title="required">required</em></span>
+    <span class="p-type">object</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">allow_http<em class="p-req" title="required">required</em></span>
+    <span class="p-type">boolean</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">allow_private_network<em class="p-req" title="required">required</em></span>
+    <span class="p-type">boolean</span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Public pending connection</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">Invalid or expired invitation</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">Session required</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">409</span>
+    <span class="p-desc">Invitation already claimed or binding conflict</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-undefined">
+  <summary>
+    <span class="m get">GET</span>
+    <span class="ep-path"><code>/api/integrations/sparkygym/notifications</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Owner-authenticated durable integration notifications</span>
+  </summary>
+  <div class="ep-body">
+<p>text/event-stream with durable cursor IDs. Cookie and bearer authentication are supported. Resume using Last-Event-ID or cursor. An expired or future cursor emits snapshot-required; fetch /api/body/profile before reconnecting. No suspended-app timer guarantee.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Durable SSE replay and subsequent owner events</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">Session required</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-undefined">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/integrations/sparkygym/{connection_id}/pause</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Pause this owner's connection</span>
+  </summary>
+  <div class="ep-body">
+<p>Requires an empty JSON object. Capture remains transactional; delivery stops. Returns connection.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Public paused connection</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Connection not owned by the signed-in user</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-undefined">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/integrations/sparkygym/{connection_id}/resume</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Resume this owner's connection and wake durable delivery</span>
+  </summary>
+  <div class="ep-body">
+<p>Requires an empty JSON object. Returns connection.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Public connection</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Connection not owned by the signed-in user</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-undefined">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/integrations/sparkygym/{connection_id}/revoke</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Revoke locally and durably notify the peer</span>
+  </summary>
+  <div class="ep-body">
+<p>Requires an empty JSON object. Domain access stops immediately; source history remains read-only. Only the queued revoke control retains credential access until acknowledgement. Returns connection.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Public revoked connection</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Connection not owned by the signed-in user</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-undefined">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/integrations/sparkygym/{connection_id}/purge</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Explicitly purge this revoked source's body projections</span>
+  </summary>
+  <div class="ep-body">
+<p>Requires exactly confirm=true. Never removes manual, Hevy or watch history, local body archives, or another source. Ordinary reset and unlink do not perform this operation. Returns connection.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Public revoked connection</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">Explicit confirmation required</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Connection not owned by the signed-in user</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-undefined">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/integrations/sparkygym/{connection_id}/snapshot</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Explicitly queue a consistent two-way snapshot</span>
+  </summary>
+  <div class="ep-body">
+<p>Requires exactly include_history boolean. Captures immutable begin, items and complete under the native write boundary. Pruning requires matching count/hash and never touches post-watermark values. Returns connection.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Snapshot queued; public connection returned</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Connection not owned by the signed-in user</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-undefined">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/integrations/v1/pair/accept</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Accept SF-owner-approved pairing using the bound directional key</span>
+  </summary>
+  <div class="ep-body">
+<p>Exact-byte signed control. X-SparkyGym-Request-Id equals connection_id. The complete strict claim binding must match. Atomic activation archives local body values and completes the pending outgoing claim. Response is signed with the OG directional key and contains connection.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Signed public connection</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">Invalid signature or binding key</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">409</span>
+    <span class="p-desc">Binding conflict</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-undefined">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/integrations/v1/events</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Receive source-owned body events atomically</span>
+  </summary>
+  <div class="ep-body">
+<p>Exact-byte HMAC event envelope requires source_cursor and X-SparkyGym-Request-Id=event_id. Inbox receipt, stream revision, projection and notification commit together. Signed applied, duplicate or stale receipt; conflicts pause visibly. No whole-profile patch is accepted.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Signed event receipt</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">Signed invalid domain payload error</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">Authentication failed</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">409</span>
+    <span class="p-desc">Signed event conflict or source rewind</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">Pairing not active or transient storage failure</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-undefined">
+  <summary>
+    <span class="m get">GET</span>
+    <span class="ep-path"><code>/api/integrations/v1/capabilities</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Read authenticated paired capabilities</span>
+  </summary>
+  <div class="ep-body">
+<p>Requires a signed empty body and a fresh immutable request UUID. Response MAC binds request UUID, status and exact response bytes.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Signed version</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">Authentication failed</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-undefined">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/integrations/v1/snapshot</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Exchange signed snapshot request, begin or complete controls</span>
+  </summary>
+  <div class="ep-body">
+<p>Fixed path and exact bytes authenticated. Every control has its own immutable request UUID. Begin declares snapshot_id, start_cursor, watermark, expected_count, membership_sha256 and prune_resources. Completion validates sorted UTF-8 resource/NUL/entity/LF membership before same-source pruning.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Signed snapshot_queued</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">Authentication failed</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">409</span>
+    <span class="p-desc">Snapshot conflict</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-undefined">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/integrations/v1/revoke</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Receive paired revocation</span>
+  </summary>
+  <div class="ep-body">
+<p>Signed immutable control bound to connection_id and request_id. Immediately blocks domain access while retaining source history. Signed public connection response.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Signed public revoked connection</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">Authentication failed</span>
+  </div>
+    </div>
+  </div>
+</details>
 
 <details class="ep" id="op-getData">
   <summary>
@@ -3841,14 +4289,87 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   </div>
 </details>
 
+<details class="ep sch" id="schema-TrainingHint">
+  <summary>
+    <span class="sch-name"><code>TrainingHint</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum"></span>
+  </summary>
+  <div class="ep-body">
+
+<div class="ptab">
+  <div class="prow">
+    <span class="p-name">entity_id<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(&le; 200 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">name<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(&le; 300 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">timezone<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string</span>
+    <span class="p-desc">Source IANA timezone</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">week_start<em class="p-req" title="required">required</em></span>
+    <span class="p-type">integer <span class="p-hint">(0&ndash;6)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">effective_from<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(date)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">effective_until<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string | null <span class="p-hint">(date)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">days<em class="p-req" title="required">required</em></span>
+    <span class="p-type">object[]</span>
+    <span class="p-desc">Unique weekdays. Missing weekdays and empty slots mean rest within the effective range.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">days[].weekday<em class="p-req" title="required">required</em></span>
+    <span class="p-type">integer <span class="p-hint">(0&ndash;6)</span></span>
+    <span class="p-desc">Sunday is 0</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">days[].slots<em class="p-req" title="required">required</em></span>
+    <span class="p-type">object[]</span>
+    <span class="p-desc">Unique buckets; exactly one main when nonempty. No inferred clocks or slot IDs.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">days[].slots[].time_slot<em class="p-req" title="required">required</em></span>
+    <span class="p-type">&quot;morning&quot; | &quot;noon&quot; | &quot;afternoon&quot; | &quot;evening&quot;</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">days[].slots[].activity<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(&le; 300 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">days[].slots[].is_main<em class="p-req" title="required">required</em></span>
+    <span class="p-type">boolean</span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+  </div>
+</details>
+
 <details class="ep sch" id="schema-State">
   <summary>
     <span class="sch-name"><code>State</code></span>
     <span class="ep-chev" aria-hidden="true"></span>
-    <span class="ep-sum">The whole app state as one blob.</span>
+    <span class="ep-sum">The native profile, stored transactionally in SQL and mirrored locally by the phone.</span>
   </summary>
   <div class="ep-body">
-<p>The server treats it as opaque (it only strips <code>active</code> on save and reads a few fields for reminders and the admin dashboard). The schema below is <b>representative, not enforced</b> (except <code>workouts</code> and <code>routines</code>, which must be arrays (or null) when present), and grows with the app. Concurrent writes are caught by the server's revision (<code>_rev</code>, see PUT /api/data); the client merges the two documents and decides by <code>_ts</code> which side's settings win.</p>
+<p>It is not opaque: JSON safety, routine assignments, managed body ownership and integration boundaries are enforced on writes. The remaining schema is representative and grows with the app. Concurrent writes use the revision/CAS contract; clients merge per-entry and per-setting edit stamps, not simply the newest whole document. SF training hints are a separate source-owned read model, never profile state or personal day notes.</p>
 <div class="ptab">
   <div class="prow">
     <span class="p-name">_ts</span>
@@ -3878,7 +4399,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <div class="prow">
     <span class="p-name">edited</span>
     <span class="p-type">object</span>
-    <span class="p-desc">When each setting and plan day was last changed, ms ({ queue: ms, 'week.3': ms, … }). Never shrinks on the server; stamped for writers that do not stamp (see PUT /api/data).</span>
+    <span class="p-desc">When each setting and plan day was last changed, ms ({ queue: ms, 'week.3': ms, … }). Each week.N stamp owns that weekday's routine assignments; different weekdays merge independently. Never shrinks on the server; stamped for writers that do not stamp (see PUT /api/data).</span>
   </div>
   <div class="prow">
     <span class="p-name">unit</span>
@@ -3918,7 +4439,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <div class="prow">
     <span class="p-name">week</span>
     <span class="p-type">object</span>
-    <span class="p-desc">Weekly plan: weekday (0=Sunday … 6) → routine id.</span>
+    <span class="p-desc">Native weekday routine assignments, Sunday=0 through Saturday=6. Several routine IDs combine into one workout. Legacy scalar IDs remain readable. Independent freestyle workouts need no assignment.</span>
   </div>
   <div class="prow">
     <span class="p-name">dayPlan</span>

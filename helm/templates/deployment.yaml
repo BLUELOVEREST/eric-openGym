@@ -5,7 +5,7 @@ metadata:
   labels:
     {{- include "helm.labels" . | nindent 4 }}
 spec:
-  # One writer: the API's data is JSON files on a ReadWriteOnce volume. Recreate, so the old pod
+  # One API owns the auth registry and SQL profiles on a ReadWriteOnce volume. Recreate, so the old pod
   # lets go of the volume before the new one mounts it.
   replicas: 1
   strategy:

@@ -70,6 +70,7 @@ export function buildCompletedWorkout(active, { end = Date.now(), prs = [], snap
   const entries = (active?.entries || []).map(entry => {
     const completed = {
       id: entry.id,
+      ...(entry.instance_id ? { instance_id: entry.instance_id } : {}),
       // Only what was logged — the live-session bookkeeping on a row stays behind (finishedRow).
       sets: (entry.sets || []).map(finishedRow),
       topW: bestWeightForEntry(entry) || null,
@@ -122,6 +123,7 @@ export function buildCompletedWorkout(active, { end = Date.now(), prs = [], snap
     routineId: routineIds[0] ?? null,
     name: active.name,
     bw: active.bw,
+    ...(Object.hasOwn(active, 'targetW') ? { targetW: active.targetW } : {}),
     entries,
     prs,
     ...(allNoProg ? { excludeFromProgression: true } : {}),

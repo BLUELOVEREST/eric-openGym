@@ -6,8 +6,11 @@ const TIMESTAMP = /^(0|[1-9]\d{0,15})$/
 const SIGNATURE = /^v1=[a-f0-9]{64}$/
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const FIELDS = ['version', 'event_id', 'connection_id', 'producer', 'resource', 'entity_id', 'revision', 'operation', 'occurred_at', 'payload']
-const BODY_RESOURCES = ['body_measurement', 'body_goal']
-const TRAINING_RESOURCES = ['exercise', 'workout', 'schedule_summary', 'personal_media']
+export const RESOURCE_PRODUCERS = Object.freeze({
+  body_definition: 'sparkyfitness', body_measurement: 'sparkyfitness', body_goal: 'sparkyfitness',
+  exercise: 'opengym', workout: 'opengym', schedule_summary: 'sparkyfitness', personal_media: 'opengym',
+})
+export const isUuid = value => typeof value === 'string' && UUID.test(value)
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value)
 
 function checkBody(body) {
@@ -24,7 +27,9 @@ export function parseEvent(body) {
   checkBody(body)
   const event = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(body))
   const timestamp = typeof event?.occurred_at === 'string' ? new Date(event.occurred_at) : new Date(NaN)
-  if (!object(event) || Object.keys(event).length !== FIELDS.length ||
+  const hasCursor = object(event) && Object.hasOwn(event, 'source_cursor')
+  if (!object(event) || Object.keys(event).length !== FIELDS.length + (hasCursor ? 1 : 0) ||
+    (hasCursor && (!Number.isSafeInteger(event.source_cursor) || event.source_cursor < 1)) ||
     !FIELDS.every(key => Object.hasOwn(event, key)) || event.version !== 1 ||
     typeof event.event_id !== 'string' || !UUID.test(event.event_id) ||
     typeof event.connection_id !== 'string' || !UUID.test(event.connection_id) ||
@@ -34,8 +39,8 @@ export function parseEvent(body) {
     !Number.isFinite(timestamp.getTime()) || timestamp.toISOString() !== event.occurred_at ||
     !['upsert', 'delete'].includes(event.operation) ||
     (event.operation === 'delete' ? event.payload !== null : !object(event.payload)) || !finiteJson(event.payload) ||
-    !(event.producer === 'sparkyfitness' && BODY_RESOURCES.includes(event.resource) ||
-      event.producer === 'opengym' && TRAINING_RESOURCES.includes(event.resource))) {
+    !(typeof event.resource === 'string' && Object.hasOwn(RESOURCE_PRODUCERS, event.resource) &&
+      RESOURCE_PRODUCERS[event.resource] === event.producer)) {
     throw new TypeError('Invalid event envelope')
   }
   return event

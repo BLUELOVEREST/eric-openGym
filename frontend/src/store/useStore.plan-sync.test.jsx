@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+vi.mock('../lib/sparkygym-client.js', () => import('../test-fixtures/local-body-client.js'))
 
 /* Where the sync rules meet the plan rules. A routine edit carries its own edit time (`_ts`,
    stampRoutines) so a conflict keeps the version edited last; a logged session carries the plan

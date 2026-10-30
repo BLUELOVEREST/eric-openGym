@@ -91,6 +91,7 @@ export function convertStateUnit(S, to) {
   const convSession = s => {
     const out = { ...s, entries: (s.entries || []).map(e => convEntry(e, from, to)) }
     if (out.bw != null) out.bw = bw(out.bw)
+    if (out.targetW != null) out.targetW = bw(out.targetW)
     if (Number.isFinite(out.vol)) out.vol = workoutVolume({ entries: out.entries.filter(e => Array.isArray(e?.sets)) })
     return out
   }

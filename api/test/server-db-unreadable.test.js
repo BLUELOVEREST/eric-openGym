@@ -83,14 +83,12 @@ test('db.json unreadable after a sign-up: the copy kept is the last save, so the
   }
 });
 
-test('an unreadable state file is a 503 on GET and PUT, and is not replaced', async t => {
+test('an unreadable legacy profile refuses boot and preserves the original', { timeout: 10000 }, async t => {
   const d = dataDir(t);
   fs.writeFileSync(path.join(d, 'state-u_a.json'), '{"_rev":7,"workouts":[{"id":"w1"');
   const h = start(t, d);
-  const base = `http://127.0.0.1:${await boundPort(h.child, () => h.log)}`;
-  const headers = { Cookie: cookie('u_a'), 'Content-Type': 'application/json' };
-  assert.equal((await fetch(`${base}/api/data`, { headers })).status, 503);
-  const put = await fetch(`${base}/api/data`, { method: 'PUT', headers, body: JSON.stringify({ state: { workouts: [], routines: [] } }) });
-  assert.equal(put.status, 503);
+  assert.equal(await h.exit, 1);
+  assert.match(h.log, /SyntaxError|legacy_profile_invalid/);
+  assert.doesNotMatch(h.log, /gym-api on :\d+/, 'no request can adopt or overwrite an empty profile');
   assert.equal(fs.readFileSync(path.join(d, 'state-u_a.json'), 'utf8'), '{"_rev":7,"workouts":[{"id":"w1"');
 });

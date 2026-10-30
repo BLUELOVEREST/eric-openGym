@@ -23,7 +23,7 @@ flowchart LR
   subgraph Server["Your server (docker compose)"]
     N["web: nginx<br/>app files, 180 px media"]
     API["api: node:http<br/>server.js"]
-    D[("./data<br/>db.json, state-&lt;user&gt;.json,<br/>uploads/, audit.log")]
+    D[("./data<br/>db.json, profiles.sqlite,<br/>uploads/, audit.log")]
   end
 
   B -- HTTPS, cookie --> N
@@ -130,10 +130,13 @@ copies `api/coach/core/` into its build stage.
 ## Server
 
 `api/server.js` is a single `node:http` server. Routes are keys of one object
-(`routes['GET /api/health']`), matched on method and path. Storage is two kinds of JSON file under
-`DATA_DIR`: `db.json` for users, passkeys, invites and push subscriptions,
-and one `state-<uid>.json` per profile. Every write goes to a temp file first and is renamed over
-the old one (`durable.js`), so a crash never leaves half a file.
+(`routes['GET /api/health']`), matched on method and path. Under `DATA_DIR`, `db.json`
+holds users, passkeys, invites and push subscriptions; `durable.js` fsyncs and replaces
+that registry atomically. `profiles.sqlite` is the only live profile source. Native
+profile CAS, connections, stream revisions and inbox/outbox records use SQLite WAL
+transactions. JSON profiles are imported once with verified backups, never read as a
+runtime fallback. Coach and MCP use read-only SQL readers. See
+[`integrations/native-storage-plan.md`](integrations/native-storage-plan.md).
 
 Sign-in is a passkey (`@simplewebauthn/server`), optionally a password, plus a signed session
 cookie. Phones get the same signed session as a bearer token, made by pairing with a one-time code

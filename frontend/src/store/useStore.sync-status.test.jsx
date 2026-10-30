@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+vi.mock('../lib/sparkygym-client.js', () => import('../test-fixtures/local-body-client.js'))
 
 /* What the store tells the screens about the server (`sync`, `syncNow`, `unsyncedChanges`), and
    the rule that signing out never loses a change silently: it refuses while anything is

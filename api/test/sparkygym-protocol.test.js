@@ -39,6 +39,7 @@ for (const patch of [
   { entity_id: 'x'.repeat(201) }, { producer: 'opengym' }, { resource: 'statistics' },
   { payload: null }, { payload: [] }, { extra: true }, { user_id: 'untrusted-user' },
   { operation: 'delete' },
+  { resource: ['body_measurement'] }, { resource: 'constructor' },
 ]) test(`rejects invalid envelope ${JSON.stringify(patch)}`, () => {
   assert.throws(() => parseEvent(Buffer.from(JSON.stringify({ ...event, ...patch }))))
 })

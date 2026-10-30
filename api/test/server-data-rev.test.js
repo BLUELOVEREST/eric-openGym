@@ -1,3 +1,4 @@
+import { readProfile } from './profile-fixture.mjs';
 /* /api/data carries a server revision: GET hands it out, PUT with `baseRev` is refused (409, with
    the current document) when another write landed in between, PUT without `baseRev` overwrites
    as clients from before revisions always did. Real server.js in a child. */
@@ -46,7 +47,7 @@ test('GET/PUT /api/data: revisions, conditional writes and the legacy overwrite'
   const uid = 'u_rev_1';
   const get = async () => { const r = await fetch(`${h.api}/api/data`, { headers: headers(uid) }); return { status: r.status, body: await r.json() }; };
   const put = async body => { const r = await fetch(`${h.api}/api/data`, { method: 'PUT', headers: headers(uid), body: JSON.stringify(body) }); return { status: r.status, body: await r.json() }; };
-  const onDisk = () => JSON.parse(fs.readFileSync(path.join(h.dataDir, `state-${uid}.json`), 'utf8'));
+  const onDisk = () => readProfile(h.dataDir, uid);
 
   // nothing synced yet
   let r = await get();
@@ -115,7 +116,7 @@ test('PUT /api/data refuses an empty object, which would wipe the profile and ke
   const uid = 'u_rev_1';
   const put = async body => { const r = await fetch(`${h.api}/api/data`, { method: 'PUT', headers: headers(uid), body: JSON.stringify(body) }); return { status: r.status, body: await r.json() }; };
   const rev = async () => (await fetch(`${h.api}/api/data/rev`, { headers: headers(uid) }).then(r => r.json())).rev;
-  const onDisk = () => JSON.parse(fs.readFileSync(path.join(h.dataDir, `state-${uid}.json`), 'utf8'));
+  const onDisk = () => readProfile(h.dataDir, uid);
 
   assert.equal((await put({ state: { _ts: 100, workouts: [{ id: 'w1', d: '2026-09-01' }], routines: [] } })).status, 200);
   assert.equal(await rev(), 1);

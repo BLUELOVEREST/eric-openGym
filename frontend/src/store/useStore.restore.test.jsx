@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+vi.mock('../lib/sparkygym-client.js', () => import('../test-fixtures/local-body-client.js'))
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 

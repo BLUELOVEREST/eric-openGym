@@ -10,6 +10,8 @@ import { createRoot } from 'react-dom/client'
 import { useStore } from '../store/useStore.js'
 import { startFlow } from '../sheets.jsx'
 import Home from './Home.jsx'
+import { useSparkyGym } from '../lib/sparkygym-client.js'
+import { todayISO } from '../lib/format.js'
 
 const nav = vi.fn()
 vi.mock('react-router-dom', () => ({ useNavigate: () => nav }))
@@ -24,6 +26,7 @@ let host, root
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   nav.mockClear(); startFlow.mockClear()
+  useSparkyGym.setState({ owner: null, scope: '', trainingHints: null })
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
@@ -43,6 +46,16 @@ const mount = () => act(() => root.render(<Home />))
 const door = () => [...host.querySelectorAll('button')].find(b => b.textContent.includes('Choose a different workout'))
 
 describe('Home — the way to the Start screen when a plan already owns today', () => {
+  it('starts freestyle without a routine when SF has training guidance, not a rest claim', () => {
+    setS({ week: {}, routines: [] })
+    useSparkyGym.setState({ trainingHints: { revision: 1, date: null, hints: [{ entity_id: 'sf', name: 'Weekly intent', timezone: 'UTC', week_start: 1, effective_from: todayISO(), effective_until: null, days: [{ weekday: new Date().getDay(), slots: [{ time_slot: 'evening', activity: 'Football', is_main: true }] }] }] } })
+    mount()
+    expect(host.textContent).toContain('Football')
+    expect(host.querySelector('.today-row').textContent).not.toContain('Rest day')
+    act(() => host.querySelector('.today-row').dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(startFlow).toHaveBeenCalledWith([])
+    expect(door()).toBeTruthy()
+  })
   it('offers the door on a planned day, where the Start button would start the plan', () => {
     setS(); mount()
     expect(door()).toBeTruthy()

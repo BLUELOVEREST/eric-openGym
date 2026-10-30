@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+vi.mock('../lib/sparkygym-client.js', () => import('../test-fixtures/local-body-client.js'))
 
 /* QA, v1.3.9 (Android): a phone in local mode, one workout on it, paired with an account that
    has twelve. While "Add this device's workouts?" was open, the poll pulled, took the phone's

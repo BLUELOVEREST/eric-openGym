@@ -282,10 +282,14 @@ export function initReminderSync(getState) {
 // off mobile; the store's own visibility/focus listeners cover the browser.
 export function onAppActive(cb) {
   if (!MOBILE) return
-  // Returned, not dropped, for the same reason as in initReminderSync.
+  let stopped = false, listener = null
   import('@capacitor/app').then(({ App }) =>
-    App.addListener('appStateChange', ({ isActive }) => { if (isActive) cb() })
-  ).catch(() => {})
+    App.addListener('appStateChange', ({ isActive }) => { if (!stopped && isActive) cb() })
+  ).then(handle => {
+    if (stopped) return handle.remove()
+    listener = handle
+  }).catch(() => {})
+  return () => { stopped = true; if (listener) Promise.resolve(listener.remove()).catch(() => {}) }
 }
 
 // WKWebView can't do blob-URL downloads, so the backup goes out through the OS share sheet

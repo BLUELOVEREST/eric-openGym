@@ -256,11 +256,15 @@ Everything lives in `./data` on your host:
 |---|---|
 | `db.json` | Profiles and public passkey data |
 | `db.json.bak` | A copy of the last good `db.json`, used if the main file can't be read |
-| `state-<user>.json` | Each user's plan, workouts, body weight and settings |
+| `profiles.sqlite` | Transactional profile state and separate integration connection, revision, inbox and outbox tables |
+| `profiles.sqlite-wal`, `profiles.sqlite-shm` | SQLite working files; never remove them while the API is running |
+| `legacy-profile-backup-<id>/` | Verified one-time migration backup and retired JSON profiles; never a runtime fallback |
 | `audit.log` | Admin activity log (no IP addresses unless you turn that on) |
 | `secret` | Session-cookie signing key |
 
-Back up `./data` and you've backed up everything. Passkey private keys never reach the server; they
+Stop the API before archiving the complete `./data` directory; see
+[backup and restore](docs/SELF_HOSTING.md#6-backups). Copying only a live SQLite main
+file is not a backup. Passkey private keys never reach the server; they
 stay in your phone's secure hardware or your password manager.
 
 ## Documentation

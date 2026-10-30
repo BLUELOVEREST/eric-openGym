@@ -139,9 +139,10 @@ and `api/web.livenessProbe`/`readinessProbe` work the way they do in any Helm ch
 
 ## Always one replica
 
-The API stores its data in JSON files on a single `ReadWriteOnce` volume, so the chart always runs
+The API stores its auth registry and SQLite profiles on a single `ReadWriteOnce` volume, so the chart always runs
 one replica with the `Recreate` strategy, and there is no autoscaler. A second API process would be
-a second writer to the same files.
+a second owner of the in-memory auth registry. Recreate also prevents an old JSON
+writer from overlapping the one-time SQL profile migration.
 
 ## Moving from `kubectl apply -k kubernetes/`
 

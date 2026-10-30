@@ -1,3 +1,4 @@
+import { readProfile } from './profile-fixture.mjs';
 /* PUT /api/data's stamping (sync-stamps.js): the records of removals and edits never shrink, a
    writer that does not stamp (an older app, an API planner) gets what it changed stamped, and an
    entry held against a removal on record is kept as added back. Unit cases first, then the real
@@ -407,7 +408,7 @@ test('PUT /api/data: an older app\'s two changes of one setting in a row both la
   assert.equal(now.rev, r.body.rev);                 // nothing set back, so nothing to read again
   assert.equal('_unstamped' in now.state, false);
   assert.equal('_prior' in now.state, false);
-  const onDisk = JSON.parse(fs.readFileSync(path.join(dataDir, 'state-u1.json'), 'utf8'));
+  const onDisk = readProfile(dataDir, 'u1');
   assert.ok(onDisk._unstamped?.ed?.restSec > 0);
   assert.equal(onDisk._prior?.restSec?.length, 2);   // 100, then 120
 });

@@ -78,6 +78,8 @@ server {
         # 504 here while the API was still working on it, which told the admin the wrong thing.
         proxy_read_timeout 300s;
         proxy_send_timeout 300s;
+        # Carry the API's SSE buffering opt-out through an outer reverse proxy.
+        proxy_pass_header X-Accel-Buffering;
     }
 
     # Photos and videos of custom exercises (PUT and GET under api/media/). Nginx picks the

@@ -1,22 +1,5 @@
-/* Three handlers want one field out of the state document and used to parse the whole of it on
-   the event loop: GET /api/data/rev (polled every 30 s and on every return to the foreground),
-   and the two that only want `lang` (POST /api/push/test, POST /api/push/rest-timer — once per
-   set). Measured on a 2.4 MB state that was 31 ms per rev poll, and 30 concurrent polls blocked
-   the loop for 850 ms. readStateCached — the stat cache the reminder tick has always used — reads
-   the file only when its mtime or size moved.
-
-   The key is (mtimeMs, size), and neither field is as sharp as it looks: mtime granularity is
-   4 ms on ext4 on this kernel (3901 of 3999 back-to-back same-size writes shared one timestamp),
-   and a `_rev` going from 7 to 8 keeps the file exactly as long. So a sync and the poll after it
-   inside one 4 ms tick are the same key, and the poll serves the revision from before the write —
-   measured at 7-8 of 14 rounds — and goes on serving it until some later write lands on a
-   different tick. PUT /api/data, the only writer of a state file in the tree, therefore evicts
-   the entry itself. The first test is that case.
-
-   The second test is the same blind spot from the other side: an out-of-band rewrite with a
-   pinned mtime and an identical size is invisible to the key, and no eviction covers it because
-   nothing in this tree writes that way — which is what makes it a usable probe for whether the
-   poll reads through the cache at all. */
+/* Revision polls must see completed writes immediately, including writes made through another
+   SQLite handle. Hot paths use the revision-keyed parsed-state cache. */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -27,6 +10,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { boundPort } from './helpers.mjs';
+import { readProfile, writeProfile } from './profile-fixture.mjs';
 
 const API = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECRET = crypto.randomBytes(32).toString('hex');
@@ -59,9 +43,8 @@ async function startServer(t) {
 }
 
 /* One keep-alive socket, strictly one request at a time — the next is written only once the
-   previous response has been read in full, which is the ordering a browser gives. `fetch` cannot
-   be used here: undici's round trip is ~17 ms, four mtime ticks, so it can never land a sync and
-   the poll after it inside one tick. This does, at well under a millisecond a request.
+   previous response has been read in full, which is the ordering a browser gives. This exercises
+   immediate cache invalidation without an intervening timeout.
    Deliberately NOT pipelined: pipelining lets the server start the poll's handler before the
    PUT's has finished, which is a different effect and would prove nothing about the cache. */
 async function keepAlive(t, port) {
@@ -109,12 +92,9 @@ async function keepAlive(t, port) {
 test('a poll right after a sync reports the revision that sync returned, not the one before it', async t => {
   const h = await startServer(t);
   const c = await keepAlive(t, h.port);
-  const file = path.join(h.dataDir, 'state-u_cost_1.json');
 
-  // The client's real loop: sync, poll, sync, poll. Every document here is the same length as the
-  // last (only `_ts` and a one-digit `_rev` move), and each pair is inside one 4 ms tick, so
-  // without an eviction on write 7-8 of these polls answer with the revision from before the PUT
-  // and the client concludes it is already up to date.
+  // The client's real loop: sync, poll, sync, poll. No delay may be required between a
+  // completed commit and a revision poll observing it.
   const stale = [];
   for (let i = 0; i < 20; i++) {
     const wrote = await c.put(100 + i);
@@ -124,32 +104,22 @@ test('a poll right after a sync reports the revision that sync returned, not the
   assert.deepEqual(stale, [], 'every poll saw the write that preceded it');
 
   // and what the polls were reporting is what is actually on disk
-  assert.equal((await c.rev()).rev, JSON.parse(fs.readFileSync(file, 'utf8'))._rev);
+  assert.equal((await c.rev()).rev, readProfile(h.dataDir, 'u_cost_1')._rev);
 });
 
-test('the poll really is reading through the stat cache', async t => {
+test('SQL revision changes invalidate the poll cache even for equal-length documents', async t => {
   const h = await startServer(t);
-  const file = path.join(h.dataDir, 'state-u_cost_1.json');
   const rev = async () => (await fetch(`${h.api}/api/data/rev`, { headers }).then(r => r.json())).rev;
-  // An out-of-band rewrite, same length and the same pinned mtime, so the key cannot tell the two
-  // apart. utimesSync round-trips this value exactly. Nothing in this tree writes a state file
-  // this way — which is what makes it a probe for the cache rather than a bug report.
-  const PINNED = new Date(1700000000000);
-  const writePinned = n => {
-    fs.writeFileSync(file, JSON.stringify({ _rev: n, lang: 'en', workouts: [], routines: [] }));
-    fs.utimesSync(file, PINNED, PINNED);
-    return fs.statSync(file);
-  };
+  // Same serialized length, but each commit changes the SQL revision.
+  const write = n => writeProfile(h.dataDir, 'u_cost_1', { _rev: n, lang: 'en', workouts: [], routines: [] });
 
-  const a = writePinned(7);
-  assert.equal(await rev(), 7, 'the first poll reads the file');
+  write(1);
+  assert.equal(await rev(), 1, 'the first poll reads the SQL profile');
 
-  const b = writePinned(8);
-  assert.equal(a.mtimeMs, b.mtimeMs, 'the rewrite really did keep its mtime');
-  assert.equal(a.size, b.size, 'and its size');
-  assert.equal(await rev(), 7, 'nothing the key can see changed, so the file was not parsed again');
+  write(2);
+  assert.equal(await rev(), 2, 'a committed SQL revision invalidates cached state');
 
-  // And a PUT evicts, so the poll is back in step with the file immediately.
+  // And a PUT evicts, so the poll is back in step with SQL immediately.
   const put = await fetch(`${h.api}/api/data`, {
     method: 'PUT', headers, body: JSON.stringify({ state: { _ts: 1, workouts: [], routines: [] }, stamped: true })
   }).then(r => r.json());
@@ -175,7 +145,8 @@ test('the three hot-path state reads all go through readStateCached', () => {
   }
   // GET /api/data hands out the document itself and PUT compares against it — both want the real
   // thing, uncached.
-  // (readStateStrict: a file that cannot be read is a 503, not an empty profile.)
+  // (readStateStrict: unavailable storage is a 503, not an empty profile.)
   assert.match(handler('GET /api/data'), /readStateStrict\(user\.id\)/);
-  assert.match(handler('PUT /api/data'), /readStateStrict\(user\.id\)/);
+  assert.match(handler('PUT /api/data'), /const stored = readProfileStrict\(user\.id\)/,
+    'PUT reads state and its internal revision from one strict snapshot');
 });

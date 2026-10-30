@@ -20,6 +20,7 @@ function stubApi(doc, script = {}) {
     const send = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)) }
     if (req.headers.authorization !== 'Bearer ' + TOKEN) return send(401, { error: 'not signed in' })
     if (req.url === '/api/me') return send(200, { user: { id: script.uid || UID, name: 'Matt' }, token: 'renewed.secret' })
+    if (req.url === '/api/body/profile') return send(200, { managed: false })
     if (req.url === '/api/data' && req.method === 'GET') { s.gets++; return send(200, { state: s.doc, rev: s.rev }) }
     if (req.url === '/api/data' && req.method === 'PUT') {
       let raw = ''

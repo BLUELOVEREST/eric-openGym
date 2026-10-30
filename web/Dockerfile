@@ -19,6 +19,8 @@ COPY frontend/package.json frontend/package-lock.json* ./
 # tool is now run with npx, docs/MOBILE.md, and not installed here).
 RUN npm ci --ignore-scripts
 COPY api/coach/core/ /app/api/coach/core/
+COPY api/integrations/sparkygym-body-model.js /app/api/integrations/sparkygym-body-model.js
+COPY api/integrations/training-hints-model.js /app/api/integrations/training-hints-model.js
 COPY frontend/ ./
 # Which build this is, shown in the app as "1.3.8+<build>" next to the version. Without it every
 # image built between two releases calls itself the same thing, and "which build are you running?"

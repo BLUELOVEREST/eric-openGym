@@ -81,6 +81,7 @@ async function openTab(user) {
 function server(doc) {
   const s = { doc: doc ? clone(doc) : null }
   h.api = async (path, opts = {}) => {
+    if (path === '/api/body/profile') return { managed: false, connection_id: null, source: null, revision: 0, definitions: [], measurements: [], target: null }
     const method = opts.method || 'GET'
     const body = opts.body ? JSON.parse(opts.body) : undefined
     if (method === 'GET' && path === '/api/data/rev') return { rev: s.doc?._rev || 0 }

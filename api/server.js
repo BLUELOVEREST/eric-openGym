@@ -1,5 +1,5 @@
 /* opengym-api — passkey (WebAuthn) auth + per-user state storage for openGym
-   No framework, JSON-file storage, signed session cookies.               */
+   No framework, SQLite profiles, JSON auth registry, signed session cookies. */
 import http from 'node:http';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -36,10 +36,14 @@ import { createMediaStore, mediaLimits, mediaConfig, MediaError, HASH_RE } from 
 import { effectiveRoutineId } from './queue.js';
 import { stampPut } from './sync-stamps.js';
 import { atomicWrite as durableWrite } from './durable.js';
+import { initializeProfileStorage } from './storage/profile-migration.js';
+import { syncDirectory } from './storage/file-sync.js';
+import { createSparkyGymIntegration } from './integrations/sparkygym.js';
 import { excusedOn, nudgeFor, nudgeWindowOpen, toneOf } from './nudge.js';
 
 const PORT = +(process.env.PORT || 3000);
 const DATA = process.env.DATA_DIR || '/data';
+const accountDisabled = user => !!user.disabled || user.deletePending === true;
 const RP_ID = process.env.RP_ID || 'localhost';
 const ORIGIN = process.env.ORIGIN || 'http://localhost:8080';
 const RP_NAME = process.env.RP_NAME || 'openGym';
@@ -184,7 +188,13 @@ function atomicWrite(file, content, mode) { durableWrite(file, content, mode); }
 // How many earlier write ids a document keeps (`_wids`, see PUT /api/data): a device that last
 // synced more writes ago than this merges on its next pull instead of taking the server's copy.
 const WID_KEEP = 50;
-const stateFile = uid => path.join(DATA, 'state-' + uid.replace(/[^a-zA-Z0-9_-]/g, '') + '.json');
+const PROFILE_STORAGE = initializeProfileStorage(DATA, { users: db.users });
+const SPARKYGYM = createSparkyGymIntegration({
+  store: PROFILE_STORAGE, secret: SECRET, origin: ORIGIN,
+  readOwner: readSession, csrfOk,
+  mediaFile: (uid, hash) => MEDIA_ON ? MEDIA.file(uid, hash) : null,
+  onBodyChange: uid => { stateCache.delete(uid); stateSummaries.delete(uid); }
+});
 // When a profile last fetched its document (GET /api/data). The document's own `_ts` moves only
 // on a push, so a device that only ever read — a second phone, a profile that trains elsewhere
 // and just looks — showed "last sync never" in the admin dashboard (QA 1.3.9). Kept on the user
@@ -198,17 +208,18 @@ function notePull(user, now = Date.now()) {
 // The later of the last push and the last pull.
 const lastSyncOf = (u, S) => Math.max(S?._ts || 0, u?.lastPull || 0) || null;
 function readState(uid) {
-  try { return JSON.parse(fs.readFileSync(stateFile(uid), 'utf8')); } catch { return null; }
+  return PROFILE_STORAGE.getProfile(uid)?.state ?? null;
 }
-// GET and PUT /api/data tell a profile with no state yet from one whose file cannot be read: the
+// GET and PUT /api/data tell a profile with no state yet from one whose SQL record cannot be read: the
 // second answers 503 instead of an empty profile, which a device would adopt, or a write would
 // replace, losing what a restore could still bring back.
 const UNREADABLE = Symbol('unreadable');
 function readStateStrict(uid) {
-  let raw;
-  try { raw = fs.readFileSync(stateFile(uid), 'utf8'); }
-  catch (e) { return e.code === 'ENOENT' ? null : UNREADABLE; }
-  try { return JSON.parse(raw); } catch { return UNREADABLE; }
+  const profile = readProfileStrict(uid);
+  return profile === UNREADABLE ? UNREADABLE : profile?.state ?? null;
+}
+function readProfileStrict(uid) {
+  try { return PROFILE_STORAGE.getProfile(uid); } catch { return UNREADABLE; }
 }
 // A stored document as a client gets it: without the server's own notes `_unstamped` and `_prior`.
 function forClient(S) {
@@ -501,21 +512,23 @@ const STATE_CACHE_MAX = 64;
 // (10 s), so nobody who is actually using the instance is ever evicted by age; the tests shorten
 // it, as they do REMINDER_TICK_MS.
 const STATE_CACHE_TTL_MS = Math.max(50, +(process.env.STATE_CACHE_TTL_MS || 600000) || 600000);
-const stateCache = new Map(); // uid -> { mtimeMs, size, hitAt, S }
+const stateCache = new Map(); // uid -> { revision, hitAt, S }
 function readStateCached(uid) {
-  let st;
-  try { st = fs.statSync(stateFile(uid)); } catch { stateCache.delete(uid); return null; }
+  const revision = PROFILE_STORAGE.getRevision(uid);
+  if (revision === null) { stateCache.delete(uid); return null; }
   const now = Date.now();
   for (const [k, v] of stateCache) if (now - v.hitAt > STATE_CACHE_TTL_MS) stateCache.delete(k);
   const hit = stateCache.get(uid);
   stateCache.delete(uid);                       // re-inserted below, so the map stays in hit order
-  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
+  if (hit && hit.revision === revision) {
     hit.hitAt = now;
     stateCache.set(uid, hit);
     return hit.S;
   }
-  const S = readState(uid);
-  stateCache.set(uid, { mtimeMs: st.mtimeMs, size: st.size, hitAt: now, S });
+  const profile = PROFILE_STORAGE.getProfile(uid);
+  if (!profile) return null;
+  const S = profile.state;
+  stateCache.set(uid, { revision: profile.revision, hitAt: now, S });
   while (stateCache.size > STATE_CACHE_MAX) stateCache.delete(stateCache.keys().next().value);
   return S;
 }
@@ -537,22 +550,22 @@ function nudgeTick(user, S, now) {
   sendPush(user.id, nudgePush(S.lang, toneOf(S.reminder), routine, now.date));
 }
 // What the tick needs to know before it reads a whole state: the reminder settings and whether
-// the Coach was agreed to, kept per user against the state file's mtime and size. The state cache
+// the Coach was agreed to, kept per user against the SQL profile revision. The state cache
 // above holds at most STATE_CACHE_MAX documents, and the tick walks every subscribed user in the
 // same order, so past that many it missed on every lookup and parsed every state every 10 s: a
 // handful of accounts with multi-megabyte states stalled the instance for everyone. A summary is
 // a few bytes, so there is one for every user, and a full read happens only while one of that
 // user's windows is open and something could still be sent.
-const stateSummaries = new Map(); // uid -> { mtimeMs, size, rem, consent, settled }
+const stateSummaries = new Map(); // uid -> { revision, rem, consent, settled }
 function stateSummary(uid) {
-  let st;
-  try { st = fs.statSync(stateFile(uid)); } catch { stateSummaries.delete(uid); return null; }
+  const revision = PROFILE_STORAGE.getRevision(uid);
+  if (revision === null) { stateSummaries.delete(uid); return null; }
   const had = stateSummaries.get(uid);
-  if (had && had.mtimeMs === st.mtimeMs && had.size === st.size) return had;
+  if (had && had.revision === revision) return had;
   const S = readStateCached(uid);
   const r = S?.reminder;
   const sum = {
-    mtimeMs: st.mtimeMs, size: st.size,
+    revision,
     rem: r && typeof r === 'object' ? { on: !!r.on, tz: r.tz, time: r.time, nudge: !!r.nudge } : { on: false },
     consent: !!S?.coach?.consent?.agreedAt,
     settled: '',   // a local date the reminder was found to owe nothing on, for this file
@@ -562,7 +575,7 @@ function stateSummary(uid) {
 }
 setInterval(() => {
   for (const user of db.users) {
-    if (user.disabled) continue;            // locked out everywhere, reminders included
+    if (accountDisabled(user)) continue;   // pending deletion is irreversible, reminders included
     if (!db.subs.some(s => s.userId === user.id)) continue;
     // One user's state file is one user's problem: a shape this tick cannot read is logged and
     // skipped, not allowed to take the process — and everyone else's reminders — down with it.
@@ -683,7 +696,7 @@ function sessionUser(tok) {
   if (!uid || +exp < Date.now()) return null;
   const user = db.users.find(u => u.id === uid) || null;
   if (!user) return null;
-  if (user.disabled) return null;           // disabled accounts are locked out everywhere
+  if (accountDisabled(user)) return null;   // pending deletion cannot authenticate even if re-enabled out of band
   // Missing third field = pre-versioning cookie = version 0. Anything non-numeric is a malformed
   // payload (it still had to pass the HMAC, so this is belt-and-braces) and is refused outright.
   const claimed = ver === undefined ? 0 : Number(ver);
@@ -941,7 +954,7 @@ setInterval(() => { const now = Date.now(); for (const [k, v] of presence) if (!
 // db.json rewrite. A line torn by a crash costs one event and is dropped on read.
 //
 // On by default. It records strictly less than the instance already holds — every account is in
-// db.json and every workout is in state-<uid>.json, both readable by any admin — and a security
+// db.json and every workout is in profiles.sqlite, both readable by the operator — and a security
 // feature that ships switched off protects nobody. IP addresses are the exception: off unless you
 // ask for them, because they are the one field here that says where somebody physically is.
 const AUDIT_ON = !/^(0|false|no|off)$/i.test(process.env.AUDIT_LOG || '');
@@ -1373,17 +1386,25 @@ async function removeEmail(req, res, user, body) {
 // device links and live presence, and outside db.json their training history, any Coach
 // credential and their photos and videos. The admin's delete and the account's own both end here.
 function removeAccount(u) {
+  // Persist revocation first: SQL/FS cleanup can fail, but a half-deleted account
+  // must never regain access. Startup resumes this durable deletion intent.
+  u.disabled = true;
+  u.deletePending = true;
+  saveDb();
+  syncDirectory(DATA);
+  coachJobs.clearUser(u.id, { permanent: true });
+  PROFILE_STORAGE.deleteProfile(u.id);
+  stateCache.delete(u.id);
+  stateSummaries.delete(u.id);
+  coachConfig.clearProfileAuth(u.id);
+  MEDIA.removeUser(u.id);
   db.users = db.users.filter(x => x.id !== u.id);
   db.creds = (db.creds || []).filter(c => c.userId !== u.id);
   db.subs = (db.subs || []).filter(x => x.userId !== u.id);
   dropDeviceLinks(db, u.id);
   presence.delete(u.id);
-  // The training history and any Coach credential of theirs, both outside db.json.
-  try { fs.unlinkSync(stateFile(u.id)); } catch { /* already gone */ }
-  try { coachConfig.clearProfileAuth(u.id); } catch { /* nothing stored */ }
-  // Their photos and videos — the one place a profile's folder under uploads/ is removed.
-  try { MEDIA.removeUser(u.id); } catch (e) { console.error('media: could not remove uploads of', u.id, e.message); }
   saveDb();
+  syncDirectory(DATA);
 }
 
 const passwordRoutes = {
@@ -1410,7 +1431,7 @@ const passwordRoutes = {
       check.void();
       return json(res, 401, WRONG);
     }
-    if (user.disabled) {
+    if (accountDisabled(user)) {
       check.void();
       audit(req, 'auth.password.fail', { ok: false, user, msg: 'account-disabled' });
       return json(res, 403, { error: 'this account has been disabled', code: 'disabled' });
@@ -1648,7 +1669,7 @@ const passwordRoutes = {
       audit(req, 'auth.password.reset', { ok: false, msg: 'reset-invalid' });
       return invalid();
     }
-    if (user.disabled) {
+    if (accountDisabled(user)) {
       audit(req, 'auth.password.reset', { ok: false, user, msg: 'account-disabled' });
       return json(res, 403, { error: 'this account has been disabled', code: 'disabled' });
     }
@@ -1692,7 +1713,8 @@ const passwordRoutes = {
 // already opened. "Sign out everywhere" does that, and Settings says so where a passkey is removed.
 // The last admin may not delete their own profile while anyone else is on the instance: nobody
 // could run it from the app afterwards. Alone on it, they may go.
-const lastAdminLeaving = u => isAdmin(u) && db.users.length > 1 && db.users.filter(isAdmin).length <= 1;
+const activeAdminCount = () => db.users.filter(u => isAdmin(u) && !accountDisabled(u)).length;
+const lastAdminLeaving = u => isAdmin(u) && db.users.length > 1 && activeAdminCount() <= 1;
 // Makes a recovery code for `target` (#584): a device link that lives a day and says who made it
 // (`by`: the admin, or null for the server's own command). Making it signs the profile out
 // everywhere, as a password reset does: it is asked for when the devices are lost, and a lost phone
@@ -1883,7 +1905,7 @@ const passkeyRoutes = {
       return json(res, 400, LINK_INVALID);
     }
     const user = db.users.find(u => u.id === link.userId);
-    if (!user || user.disabled) {
+    if (!user || accountDisabled(user)) {
       audit(req, 'auth.link.fail', { ok: false, uid: link.userId, msg: 'user-unavailable' });
       return json(res, 400, LINK_INVALID);
     }
@@ -1919,7 +1941,7 @@ const passkeyRoutes = {
     // Everything above awaited: the code may have been used, replaced or dropped since (a sign-out
     // everywhere, a new password, a disable), and the profile may be gone or locked.
     const user = db.users.find(u => u.id === link.userId);
-    if (findDeviceLink(db, code) !== link || !user || user.disabled) {
+    if (findDeviceLink(db, code) !== link || !user || accountDisabled(user)) {
       audit(req, 'auth.link.fail', { ok: false, uid: link.userId, msg: 'link-invalid' });
       return json(res, 400, LINK_INVALID);
     }
@@ -1950,7 +1972,13 @@ const passkeyRoutes = {
 // either way: an admin deleting a profile must still remove files uploaded while it was on.
 const MEDIA_LIMITS = mediaLimits(process.env);
 const MEDIA_ON = MEDIA_LIMITS.enabled;
-const MEDIA = createMediaStore({ dir: path.join(DATA, 'uploads'), limits: MEDIA_LIMITS, readState });
+const MEDIA = createMediaStore({ dir: path.join(DATA, 'uploads'), limits: MEDIA_LIMITS, readState: uid => {
+  const state = readState(uid);
+  if (!state) return null; // Unreadable state must never authorize destructive garbage collection.
+  const retained = PROFILE_STORAGE.pendingMediaHashes(uid).map(hash => ({ media: [{ hash }] }));
+  return retained.length ? { ...state, workouts: [...(state.workouts || []), ...retained] } : state;
+} });
+for (const user of [...db.users]) if (user.deletePending === true) removeAccount(user);
 // Leftovers of uploads the previous process was receiving when it stopped.
 try { MEDIA.cleanTmp(); } catch (e) { console.error('media: boot cleanup failed', e.message); }
 // Per profile, not per address: every upload is signed in, and behind a proxy one address can be
@@ -2039,6 +2067,8 @@ const mediaRoutes = {
     try { mediaThrottle(req, user, MEDIA_BURST); } catch (e) { MEDIA.discard(req); throw e; }
     req.allowSlowBody?.();   // a signed-in upload within its budget may take the half hour
     const r = await MEDIA.receive(user.id, req.mediaHash, req);
+    try { PROFILE_STORAGE.wakeMedia(user.id, req.mediaHash); } catch { console.error('integration media wake failed'); }
+    SPARKYGYM.afterCommitWake();
     json(res, r.status, r.body);
   },
   'GET /api/media/{hash}': async (req, res) => {
@@ -2295,7 +2325,7 @@ const routes = {
       audit(req, 'auth.login.fail', { ok: false, uid: cred.userId, msg: 'user-missing' });
       return json(res, 500, { error: 'user missing' });
     }
-    if (user.disabled) {
+    if (accountDisabled(user)) {
       audit(req, 'auth.login.fail', { ok: false, user, msg: 'account-disabled' });
       return json(res, 403, { error: 'this account has been disabled', code: 'disabled' });
     }
@@ -2405,7 +2435,7 @@ const routes = {
       return json(res, 400, { error: 'invalid or expired code', code: 'pair-invalid' });
     }
     const user = db.users.find(u => u.id === p.uid);
-    if (!user || user.disabled) {
+    if (!user || accountDisabled(user)) {
       audit(req, 'auth.pair.fail', { ok: false, uid: p.uid, msg: 'user-unavailable' });
       return json(res, 400, { error: 'invalid or expired code', code: 'pair-invalid' });
     }
@@ -2420,7 +2450,7 @@ const routes = {
   ...passkeyRoutes,
 
   // `rev` is the server's own count of writes to this profile (also stored inside the document as
-  // `_rev`, so every other reader of the file — reminder tick, admin, Coach, MCP — is unaffected).
+  // `_rev`, so reminder tick, admin, Coach and MCP see the same public document).
   // A client pushes it back as `baseRev`, and a write over a document it never saw is refused.
   // `_unstamped` is the server's note of what it stamped for an older app's last push
   // (sync-stamps.js ownRecord), `_prior` what each field held before (notePrior): read back only
@@ -2429,16 +2459,16 @@ const routes = {
     const user = readSession(req);
     if (!user) return json(res, 401, { error: 'not signed in' });
     const state = readStateStrict(user.id);
-    if (state === UNREADABLE) { console.error('state file unreadable for', user.id); return json(res, 503, { error: 'state unreadable' }); }
+    if (state === UNREADABLE) { console.error('profile storage unreadable for', user.id); return json(res, 503, { error: 'state unreadable' }); }
     notePull(user);
     json(res, 200, { state: forClient(state), rev: state?._rev || 0 });
   },
   // Just the revision: the client asks this every half minute while it is open and on every
   // return to the foreground, and fetches the document only when the number moved — a signed-in
   // device is meant to show what the server has, and this is what keeps that cheap.
-  // Cheap means the stat cache the reminder tick already uses: parsing a megabytes-long document
+  // Cheap means the revision cache the reminder tick already uses: parsing a megabytes-long document
   // to read one number off it cost 31 ms per poll on a 2.4 MB state, all of it on the event loop.
-  // Every write goes through atomicWrite's rename, so the cache can never hand out a stale rev.
+  // Every native write advances the SQL revision used to validate this cache.
   'GET /api/data/rev': async (req, res) => {
     const user = readSession(req);
     if (!user) return json(res, 401, { error: 'not signed in' });
@@ -2473,7 +2503,10 @@ const routes = {
     const user = readSession(req);
     if (!user) return json(res, 401, { error: 'not signed in' });
     const body = await readBody(req);
+    if (!readSession(req)) return json(res, 401, { error: 'not signed in' });
     if (!body.state || typeof body.state !== 'object') return json(res, 400, { error: 'state required' });
+    try { SPARKYGYM.beforeProfileWrite(user.id, body.state, req.headers); }
+    catch (error) { return json(res, error.status || 409, { error: error.message }); }
     // An object with nothing of the profile in it empties the document with the counter left
     // intact: what lands on disk is `{"_rev":n+1}`, every routine, workout and weigh-in gone, and
     // the next poll reports a revision the client accepts as its own. `_rev` and `_ts` do not
@@ -2502,10 +2535,10 @@ const routes = {
     // push would silently drop that write. The current document travels back with the 409, so
     // the client can merge and try again without a second request. No `baseRev` (a client from
     // before revisions, or a deliberate replace such as a backup import) overwrites, as before.
-    // readState and atomicWrite are synchronous with nothing awaited between them, so the
-    // compare-and-write is atomic for this process.
-    const cur = readStateStrict(user.id);
-    if (cur === UNREADABLE) { console.error('state file unreadable for', user.id); return json(res, 503, { error: 'state unreadable' }); }
+    // The SQL compare-and-swap also guards writes from other native connections.
+    const stored = readProfileStrict(user.id);
+    if (stored === UNREADABLE) { console.error('profile storage unreadable for', user.id); return json(res, 503, { error: 'state unreadable' }); }
+    const cur = stored?.state ?? null;
     const curRev = cur?._rev || 0;
     // `_rev` is a counter, so after the data directory went back in time (a restored backup, a
     // write lost to a power cut) the same number names a different document. Every write also gets
@@ -2547,17 +2580,20 @@ const routes = {
     body.state._wid = crypto.randomBytes(8).toString('hex');
     // JSON.parse takes any nesting, JSON.stringify recurses and runs out of stack on a document
     // nested some thousands deep. No client builds one; it is a bad request, not a server error.
-    let text;
-    try { text = JSON.stringify(body.state); }
-    catch (e) { if (e instanceof RangeError) return json(res, 400, { error: 'invalid state' }); throw e; }
-    atomicWrite(stateFile(user.id), text);
-    // The stat cache cannot see this write on its own: mtime granularity is 4 ms here (ext4 on
-    // this kernel — 3901 of 3999 back-to-back same-size writes shared one timestamp), and a
-    // `_rev` going from 7 to 8 does not change the file's size, so two writes inside one 4 ms
-    // tick are the same (mtimeMs, size) key. A reader that sampled between them would then serve
-    // the old revision until some later write happened to land on a different tick. This is the
-    // only writer of a state file in the tree, so evicting here is the whole fix.
+    try { PROFILE_STORAGE.commitProfile(user.id, stored?.revision ?? 0, body.state); }
+    catch (e) {
+      if (e instanceof RangeError || ['invalid_json', 'invalid_profile', 'private_state_forbidden'].includes(e.message)) return json(res, 400, { error: 'invalid state' });
+      if (e.message === 'profile_conflict') {
+        const latest = readStateStrict(user.id);
+        if (latest === UNREADABLE) return json(res, 503, { error: 'state unreadable' });
+        return json(res, 409, { error: 'conflict', rev: latest?._rev || 0, state: forClient(latest) });
+      }
+      throw e;
+    }
+    // Other readers use SQL revisions; local caches are also evicted immediately.
     stateCache.delete(user.id);
+    stateSummaries.delete(user.id);
+    SPARKYGYM.afterCommitWake();
     // Starts (or stops) the grace clock of every stored file this write stopped (or started)
     // referencing. Bookkeeping only: the state is already saved, so nothing here may turn a
     // successful write into an error.
@@ -2706,7 +2742,7 @@ const routes = {
       const last = workouts[workouts.length - 1];
       return {
         id: u.id, name: u.name, created: u.created || null,
-        disabled: !!u.disabled, admin: isAdmin(u), owner: isOwner(u), invitedBy: u.invitedBy || null,
+        disabled: accountDisabled(u), admin: isAdmin(u), owner: isOwner(u), invitedBy: u.invitedBy || null,
         workouts: workouts.length,
         lastWorkout: last ? last.d : null,
         lastSync: lastSyncOf(u, S),
@@ -2729,7 +2765,7 @@ const routes = {
     const S = readState(u.id) || {};
     json(res, 200, {
       user: {
-        id: u.id, name: u.name, created: u.created || null, disabled: !!u.disabled, admin: isAdmin(u), owner: isOwner(u), invitedBy: u.invitedBy || null,
+        id: u.id, name: u.name, created: u.created || null, disabled: accountDisabled(u), admin: isAdmin(u), owner: isOwner(u), invitedBy: u.invitedBy || null,
         // Only on an instance with password sign-in: whether they have one, and until when an
         // unused reset code is good.
         ...(PASSWORD_LOGIN ? { password: hasPassword(u), email: u.email || null, resetUntil: u.pwReset?.exp > Date.now() ? u.pwReset.exp : null } : {}),
@@ -2760,7 +2796,7 @@ const routes = {
     if (u.id === admin.id) return json(res, 400, { error: 'you are signed in: add a passkey in Settings instead', code: 'self' });
     if (isOwner(u)) return json(res, 403, { error: 'the owner recovers with the server command (recover.js)', code: 'owner' });
     if (isAdmin(u) && !isOwner(admin)) { audit(req, 'admin.denied', { ok: false, user: admin, target: u, msg: 'recovery' }); return json(res, 403, { error: 'only the owner can make a recovery code for an admin' }); }
-    if (u.disabled) return json(res, 400, { error: 'enable the account first', code: 'disabled' });
+    if (accountDisabled(u)) return json(res, 400, { error: 'enable the account first', code: 'disabled' });
     const { code, link } = issueRecovery(req, u, admin);
     json(res, 200, { ok: true, name: u.name, code, expires: link.exp });
   },
@@ -2770,6 +2806,7 @@ const routes = {
     const body = await readBody(req);
     const u = db.users.find(x => x.id === body.id);
     if (!u) return json(res, 404, { error: 'no such user' });
+    if (u.deletePending === true) return json(res, 409, { error: 'account deletion in progress', code: 'deleting' });
     if (isAdmin(u)) return json(res, 400, { error: 'cannot disable an admin' });
     u.disabled = !!body.disabled;
     if (u.disabled) presence.delete(u.id);   // drop them off "training now" at once
@@ -2792,7 +2829,7 @@ const routes = {
     const u = db.users.find(x => x.id === body.id);
     if (!u) return json(res, 404, { error: 'no such user' });
     if (u.id === admin.id) return json(res, 400, { error: 'you cannot delete your own account' });
-    if (isAdmin(u) && db.users.filter(isAdmin).length <= 1) return json(res, 400, { error: 'cannot delete the last admin' });
+    if (isAdmin(u) && !accountDisabled(u) && activeAdminCount() <= 1) return json(res, 400, { error: 'cannot delete the last admin' });
     if (isOwner(u)) return json(res, 400, { error: 'the owner cannot be deleted; hand the role to another admin first' });
     if (isAdmin(u) && !isOwner(admin)) { audit(req, 'admin.denied', { ok: false, user: admin, target: u }); return json(res, 403, { error: 'only the owner can delete an admin' }); }
     const name = u.name;
@@ -2813,7 +2850,7 @@ const routes = {
     if (u.id === owner.id) return json(res, 400, { error: 'the owner stays an admin' });
     if (typeof body.admin !== 'boolean') return json(res, 400, { error: 'admin must be true or false' });
     if (ADMIN_UIDS.includes(u.id)) return json(res, 400, { error: 'this admin is set in ADMIN_UIDS on the server' });
-    if (body.admin && u.disabled) return json(res, 400, { error: 'enable the account first' });
+    if (body.admin && accountDisabled(u)) return json(res, 400, { error: 'enable the account first' });
     if (body.admin) u.admin = true; else { delete u.admin; delete u.owner; }
     saveDb();
     audit(req, body.admin ? 'admin.role.grant' : 'admin.role.revoke', { user: owner, target: u });
@@ -2827,7 +2864,7 @@ const routes = {
     const u = db.users.find(x => x.id === body.id);
     if (!u) return json(res, 404, { error: 'no such user' });
     if (u.id === owner.id) return json(res, 400, { error: 'you already are the owner' });
-    if (!isAdmin(u) || u.disabled) return json(res, 400, { error: 'make them an admin first' });
+    if (!isAdmin(u) || accountDisabled(u)) return json(res, 400, { error: 'make them an admin first' });
     for (const x of db.users) delete x.owner;
     u.owner = true;
     saveDb();
@@ -2936,7 +2973,7 @@ coachJobs.setProposalHook((uid, pending) => {
     tag: 'coach-proposal', url: '#/coach'
   });
 });
-startCadence({ users: () => db.users.filter(u => !u.disabled), userNow, skip: uid => !stateSummary(uid)?.consent });
+startCadence({ users: () => db.users.filter(u => !accountDisabled(u)), userNow, skip: uid => !stateSummary(uid)?.consent });
 startWarmup();
 
 // node's requestTimeout is one number for every route, and it is half an hour (below) for the
@@ -2982,7 +3019,7 @@ const server = http.createServer(async (req, res) => {
       'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
       // The CF-Access-* pair: a phone's Cloudflare Access service token (frontend lib/cf-access.js),
       // for an Access application that passes OPTIONS through to the origin.
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, CF-Access-Client-Id, CF-Access-Client-Secret',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, CF-Access-Client-Id, CF-Access-Client-Secret, X-SparkyGym-Client-Version, Last-Event-ID',
       'Access-Control-Max-Age': '86400',
       ...(pna ? { 'Access-Control-Allow-Private-Network': 'true' } : {})
     });
@@ -2999,6 +3036,7 @@ const server = http.createServer(async (req, res) => {
   // keys on the path could be stepped around the same way. No client sends such a path.
   const sent = req.url.split('?')[0];
   if (sent.startsWith('/') && sent !== url.pathname) return json(res, 400, { error: 'bad request' });
+  if (await SPARKYGYM.handle(req, res)) return;
   let key = req.method + ' ' + url.pathname;
   // The one route with a parameter in its path. Mapped onto its template key here so the table
   // above stays a plain lookup, and so csrfOk and the catch-all see one name for every file.
@@ -3061,7 +3099,8 @@ server.headersTimeout = 60000;
 // port that was actually bound: with PORT=0 the OS picks one, and a caller that did not choose it
 // (the tests spawn the server that way, and so does anyone running two instances on one box) has
 // no other way to learn it.
-server.listen(PORT, () => console.log(`gym-api on :${server.address().port} (rpID=${RP_ID}, origin=${ORIGIN})`));
+server.listen(PORT, () => { SPARKYGYM.start(); console.log(`gym-api on :${server.address().port} (rpID=${RP_ID}, origin=${ORIGIN})`); });
+server.on('close', () => SPARKYGYM.stop());
 
 // The server's own command for a locked-out owner or admin (#584, recover.js): asked over a local
 // socket only this process's user can open (admin-socket.js explains why not by editing db.json).
@@ -3077,7 +3116,7 @@ startAdminSocket({
     if (!found.length) return { error: id ? 'no profile with that id' : 'no profile with that name' };
     if (found.length > 1) return { error: 'several profiles have that name: pick one with --id', matches: found.map(row) };
     const u = found[0];
-    if (u.disabled) return { error: 'that profile is disabled: enable it in the admin dashboard first' };
+    if (accountDisabled(u)) return { error: 'that profile is disabled or being deleted' };
     const { code, link } = issueRecovery(CLI_REQ, u, null);
     return { ...row(u), code, expires: link.exp };
   }

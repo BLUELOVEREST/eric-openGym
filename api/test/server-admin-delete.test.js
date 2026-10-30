@@ -1,4 +1,5 @@
-/* Issue #107: disabling locks an account out but deliberately leaves state-<uid>.json and the
+import { readProfile } from './profile-fixture.mjs';
+/* Issue #107: disabling locks an account out but deliberately leaves its SQL profile and the
    credential record in place, so "no data remains" was not reachable from the dashboard. Delete
    removes the user, their credentials, their push subscriptions, their training history and any
    Coach credential — and refuses the two cases nothing in the UI could undo afterwards. Real
@@ -63,7 +64,7 @@ async function startServer(t, { twoAdmins = false } = {}) {
 
 test('removes the account and everything attached to it', async t => {
   const h = await startServer(t);
-  assert.ok(fs.existsSync(path.join(h.dataDir, `state-${VICTIM}.json`)));
+  assert.ok(Boolean(readProfile(h.dataDir, VICTIM)));
   const res = await h.del(VICTIM);
   assert.equal(res.status, 200);
 
@@ -71,7 +72,7 @@ test('removes the account and everything attached to it', async t => {
   assert.deepEqual(db.users.map(u => u.id), [ADMIN], 'the user is gone');
   assert.deepEqual(db.creds.map(c => c.userId), [ADMIN], 'their passkeys are gone');
   assert.deepEqual(db.subs.map(s => s.userId), [ADMIN], 'their push subscriptions are gone');
-  assert.equal(fs.existsSync(path.join(h.dataDir, `state-${VICTIM}.json`)), false, 'their history is gone');
+  assert.equal(Boolean(readProfile(h.dataDir, VICTIM)), false, 'their history is gone');
   // The code they joined with stays burned: it was used, and freeing it would quietly widen
   // an invite-only instance.
   assert.equal(db.invites[0].usedBy, VICTIM);

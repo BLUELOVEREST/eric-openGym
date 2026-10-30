@@ -16,6 +16,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { closeThenNav } from '../lib/nav.js'
 import { useStore } from '../store/useStore.js'
+import { useBodyState } from '../store/useBodyState.js'
 import { useUI } from '../store/useUI.js'
 import { t, tn } from '../lib/i18n.js'
 import { fmtDate, fmtNum, DAYS, weekOrder, weekStartOf, isoOf } from '../lib/format.js'
@@ -43,7 +44,7 @@ import '../coach.css'
 
 export default function CoachChat() {
   const nav = useNavigate()
-  const S = useStore(s => s.S)
+  const S = useBodyState()
   const user = useStore(s => s.user)
   const config = useStore(s => s.config)
   const coachLocal = useStore(s => s.coachLocal)

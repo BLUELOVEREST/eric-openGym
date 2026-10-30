@@ -9,6 +9,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { DatabaseSync } from 'node:sqlite'
 
 const API = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'api')
 const HAVE_API = fs.existsSync(path.join(API, 'node_modules', '@simplewebauthn', 'server'))
@@ -36,7 +37,16 @@ const DOC = {
 
 let child, dataDir, base, log = ''
 const get = async p => (await fetch(base + p, { headers: { authorization: 'Bearer ' + TOKEN } })).json()
-const stored = () => JSON.parse(fs.readFileSync(path.join(dataDir, `state-${UID}.json`), 'utf8'))
+const stored = () => {
+  const db = new DatabaseSync(path.join(dataDir, 'profiles.sqlite'), { readOnly: true })
+  try { return JSON.parse(db.prepare('SELECT state FROM profiles WHERE owner_id=?').get(UID).state) }
+  finally { db.close() }
+}
+const internalRevision = () => {
+  const db = new DatabaseSync(path.join(dataDir, 'profiles.sqlite'), { readOnly: true })
+  try { return db.prepare('SELECT revision FROM profiles WHERE owner_id=?').get(UID).revision }
+  finally { db.close() }
+}
 
 describe.skipIf(!HAVE_API)('log_workout against the real api', () => {
   let logWorkout, getState, TOOLS
@@ -44,6 +54,7 @@ describe.skipIf(!HAVE_API)('log_workout against the real api', () => {
     dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gym-mcp-e2e-'))
     fs.writeFileSync(path.join(dataDir, 'secret'), SECRET, { mode: 0o600 })
     fs.writeFileSync(path.join(dataDir, 'db.json'), JSON.stringify({ users: [{ id: UID, name: 'Matt', created: new Date().toISOString() }], creds: [], subs: [], invites: [] }))
+    // Explicit input to the server's one-time legacy migration, never runtime storage.
     fs.writeFileSync(path.join(dataDir, `state-${UID}.json`), JSON.stringify(DOC))
     child = spawn(process.execPath, ['server.js'], {
       cwd: API, stdio: ['ignore', 'pipe', 'pipe'],
@@ -78,13 +89,17 @@ describe.skipIf(!HAVE_API)('log_workout against the real api', () => {
   const CURLS = { exercises: [{ exercise: 'dumbbell curl', sets: [{ reps: 12, weight: 12 }, { reps: 12, weight: 12 }, { reps: 10, weight: 12 }] }] }
 
   test('stored: the device document as it was, plus one workout, one revision on', async () => {
-    // read the revision first, so the stat cache holds rev 5 when the write lands
+    // Read the revision first, before the transactional write lands.
     expect((await get('/api/data/rev')).rev).toBe(5)
+    const sqlRevision = internalRevision()
+    expect(sqlRevision).not.toBe(5)
     const r = await logWorkout.handler(CURLS, { env: env() })
     expect(r.logged).toBe(true)
 
     const after = stored()
     expect(after._rev).toBe(6)                       // +1: the server found nothing to restamp
+    expect(internalRevision()).toBe(sqlRevision + 1)
+    expect((await get('/api/data')).rev).toBe(after._rev)
     expect((await get('/api/data/rev')).rev).toBe(6) // and the cached revision moved with it
     expect(after._wids).toContain('w-seed')
     expect(after.workouts.map(w => w.id)).toEqual(['w-old', r.workout_id])
@@ -118,7 +133,12 @@ describe.skipIf(!HAVE_API)('log_workout against the real api', () => {
         restored = true
         // the operator puts back a copy whose counter happens to match: only the write id differs
         const cur = stored()
-        fs.writeFileSync(path.join(dataDir, `state-${UID}.json`), JSON.stringify({ ...cur, targetW: 77, _wid: 'w-restored' }))
+        const db = new DatabaseSync(path.join(dataDir, 'profiles.sqlite'))
+        try {
+          // The public counter is restored unchanged, but every SQL mutation advances the
+          // internal revision so all readers invalidate their caches.
+          db.prepare('UPDATE profiles SET state=?,revision=revision+1 WHERE owner_id=?').run(JSON.stringify({ ...cur, targetW: 77, _wid: 'w-restored' }), UID)
+        } finally { db.close() }
       }
       return fetch(url, opts)
     }

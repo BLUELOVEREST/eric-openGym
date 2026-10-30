@@ -13,6 +13,7 @@ import { localUid, invalidate } from './state.js'
 import { apiConfig, apiFetch } from './api-client.js'
 import { buildLoggedWorkout, appendLoggedWorkout, findDuplicate, BODY_PARTS, LOG_LIMITS } from '../../frontend/src/lib/log-workout.js'
 import { friendlyDuration } from './labels.js'
+import { stripManagedBodyFields } from '../../api/integrations/sparkygym-body-model.js'
 
 const localIso = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
 const hhmm = t => { const d = new Date(t); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') }
@@ -180,7 +181,11 @@ export const logWorkout = {
       if (!added.added) {
         return { logged: false, duplicate: true, workout_id: added.workout.id, date: added.workout.d, message: 'This session is already in the history; nothing was added. If it really was a second session, call again with allow_duplicate: true and a different start or name.' }
       }
-      const put = await apiFetch(cfg, '/api/data', { ...opts, method: 'PUT', body: { state: S, baseRev: got.body.rev ?? 0, ...(typeof doc._wid === 'string' ? { baseWid: doc._wid } : {}) } })
+      // Check ownership on every attempt: an unpaired profile keeps its local body log.
+      const bodyProfile = await apiFetch(cfg, '/api/body/profile', opts)
+      if (typeof bodyProfile.body?.managed !== 'boolean') throw fail('EAPI', 'the openGym server did not say who manages body data; nothing was saved')
+      const writeState = bodyProfile.body.managed ? stripManagedBodyFields(S) : S
+      const put = await apiFetch(cfg, '/api/data', { ...opts, method: 'PUT', body: { state: writeState, baseRev: got.body.rev ?? 0, ...(typeof doc._wid === 'string' ? { baseWid: doc._wid } : {}) } })
       if (put.status !== 409) {
         invalidate()
         saves.push(now)

@@ -3,6 +3,7 @@ import { t } from './i18n-core.js'
 import { MOBILE } from './mobile.js'
 import { appBase } from './app-base.js'
 import { nativeFetch } from './capacitor-fetch.js'
+import { eventDecoder } from './sparkygym-events.js'
 
 export const IS_APPLE = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent)
 export const IS_ANDROID = /Android/.test(navigator.userAgent)
@@ -65,12 +66,31 @@ export async function api(path, opts) {
   // there and the change was marked as synced while the server never saw it. status 0, not
   // undefined: this is not "offline", and the store must not show it as such.
   if (MOBILE && !remoteBase) throw failure(t('This phone is not connected to a server.'), 'not-paired', 0)
-  const headers = Object.assign({ 'Content-Type': 'application/json' }, init.headers, remoteHeaders())
+  const headers = Object.assign({ 'Content-Type': 'application/json', 'X-SparkyGym-Client-Version': '1' }, init.headers, remoteHeaders())
   // A paired phone has an absolute base of its own; everyone else is relative to where the app
   // is served, so a subpath deployment reaches its own API instead of the proxy's root.
   const url = remoteBase ? remoteBase + path : appBase().replace(/\/$/, '') + path
   const ms = timeout != null ? timeout : (init.method || 'GET').toUpperCase() === 'GET' ? TIMEOUT_GET_MS : TIMEOUT_MS
   return request(url, Object.assign({}, init, { headers }), ms)
+}
+
+export async function apiEvents(path, { signal, cursor = '', onEvent, fetchImpl = globalThis.fetch } = {}) {
+  if (MOBILE && !remoteBase) throw notPaired()
+  const url = remoteBase ? remoteBase + path : appBase().replace(/\/$/, '') + path
+  const headers = { ...remoteHeaders(), Accept: 'text/event-stream', 'X-SparkyGym-Client-Version': '1' }
+  if (cursor) headers['Last-Event-ID'] = cursor
+  const response = await fetchImpl(url, { headers, signal, cache: 'no-store', credentials: remoteBase ? 'omit' : 'same-origin' })
+  if (!response.ok) throw Object.assign(new Error('HTTP ' + response.status), { status: response.status })
+  if (!response.headers.get('content-type')?.includes('text/event-stream') || !response.body?.getReader) throw failure('Invalid event stream', 'bad-response', response.status)
+  const reader = response.body.getReader()
+  const decode = eventDecoder(onEvent)
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      decode(value)
+    }
+  } finally { await reader.cancel().catch(() => {}); reader.releaseLock() }
 }
 
 // One exchange, bounded by `ms`. No status on the timeout, like a fetch that failed outright: to

@@ -48,6 +48,7 @@ function server(doc) {
   const s = { doc: doc ? clone(doc) : null, log: [], offline: false }
   h.api = async (path, opts = {}) => {
     if (s.offline) throw new TypeError('Failed to fetch')
+    if (path === '/api/body/profile') return { managed: false, connection_id: null, source: null, revision: 0, definitions: [], measurements: [], target: null }
     const method = opts.method || 'GET'
     const body = opts.body ? JSON.parse(opts.body) : undefined
     s.log.push({ method, path, body })

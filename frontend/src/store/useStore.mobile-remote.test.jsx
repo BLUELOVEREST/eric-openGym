@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+vi.mock('../lib/sparkygym-client.js', () => import('../test-fixtures/local-body-client.js'))
 
 /* A paired phone whose server stops accepting it (Discord report, v1.3.8): a token expired or
    revoked by "sign out everywhere", a secret that did not survive a migration, a proxy in front

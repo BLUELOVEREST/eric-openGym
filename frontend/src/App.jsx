@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from 're
 import { hideBoot } from './lib/boot.js'
 import { HashRouter, Routes, Route, Navigate, useNavigate, useLocation, useNavigationType } from 'react-router-dom'
 import { useStore } from './store/useStore.js'
+import { startIntegration, useSparkyGym } from './lib/sparkygym-client.js'
 import { useUI } from './store/useUI.js'
 import { bindUI } from './components/ui.jsx'
 import { setWeightDecimals } from './lib/format.js'
@@ -375,6 +376,9 @@ function Page({ loc, render, under = false, scrollY = 0, motion = 'fade' }) {
 }
 
 export default function App() {
+  const integrationOwner = useStore(s => s.user?.id || null)
+  const integrationScope = useSparkyGym(s => s.scope)
+  useEffect(() => startIntegration(integrationOwner), [integrationOwner, integrationScope])
   const boot = useStore(s => s.boot)
   useEffect(() => { boot() }, [boot])
   useEffect(() => { prefetchViews() }, [])

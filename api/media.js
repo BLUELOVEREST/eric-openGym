@@ -25,6 +25,7 @@
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import { syncDirectory } from './storage/file-sync.js';
 import path from 'node:path';
 import { syncDir, syncFile } from './durable.js';
 
@@ -420,7 +421,7 @@ export function createMediaStore({ dir, limits, now = Date.now, readState = () =
   const users = new Map();          // safe uid -> { dir, bytes, count, reserved, inflight, hashes }
   const orphansLogged = new Set();
 
-  // The same sanitising as server.js stateFile(). An id that sanitises to nothing would name
+  // Upload directory identifiers remain filename-safe. An id that sanitises to nothing would name
   // uploads/ itself, and removeUser() would then delete everybody's files.
   function safe(uid) {
     const s = String(uid ?? '').replace(/[^a-zA-Z0-9_-]/g, '');
@@ -772,7 +773,10 @@ export function createMediaStore({ dir, limits, now = Date.now, readState = () =
     removeUser(uid) {
       const id = safe(uid);
       users.delete(id);
-      fs.rmSync(path.join(dir, id), { recursive: true, force: true });
+      const target = path.join(dir, id);
+      fs.rmSync(target, { recursive: true, force: true });
+      try { syncDirectory(dir); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
     },
     /** Boot: nothing is in flight yet, so every temp file is a leftover. */
     cleanTmp() {

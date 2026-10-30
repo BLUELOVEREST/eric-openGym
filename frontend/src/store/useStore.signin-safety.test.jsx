@@ -16,6 +16,9 @@ import { mergeStates, stampEdits } from '../lib/sync-merge.js'
 
 const clone = v => JSON.parse(JSON.stringify(v))
 const puts = () => api.mock.calls.filter(([, o]) => o?.method === 'PUT').map(([, o]) => JSON.parse(o.body))
+const localBodyResponse = handler => (path, opts) => path === '/api/body/profile'
+  ? Promise.resolve({ managed: false, connection_id: null, source: null, revision: 0, definitions: [], measurements: [], target: null })
+  : handler(path, opts)
 const up = f => useStore.getState().update(f)
 
 beforeEach(() => { localStorage.clear(); api.mockReset(); useStore.setState({ S: { ...clone(DEF), _ts: 1 }, user: null, ready: true }) })
@@ -31,7 +34,7 @@ describe('sign-in "Add them" keeps the account\'s own entries and history', () =
     up(s => { s.workouts = [{ id: 'gw1', d: '2026-10-05', start: Date.now() - 3600e3, end: Date.now(), entries: [] }] })
     const server = { ...clone(DEF), _ts: t0, workouts: [], favEx: ['0025', '0047'],
       bodyweight: [{ d: '2026-08-31', w: 82, t: t0 }, { d: '2026-09-01', w: 81.8, t: t0 }, { d: '2026-09-02', w: 81.5, t: t0 }], _rev: 7 }
-    api.mockImplementation(async (p, o) => (o?.method === 'PUT' ? { ok: true, rev: 8 } : { state: clone(server), rev: 7 }))
+    api.mockImplementation(localBodyResponse(async (p, o) => (o?.method === 'PUT' ? { ok: true, rev: 8 } : { state: clone(server), rev: 7 })))
     useStore.getState().setUser({ id: 'u1', name: 'x' }, { adopt: true })
     await useStore.getState().adoptProfile(async () => true)
     const S = useStore.getState().S
@@ -50,7 +53,7 @@ describe('sign-in "Add them" keeps the account\'s own entries and history', () =
     up(s => { s.workouts = [{ id: 'gw1', d: '2026-10-05', start: Date.now() - 3600e3, end: Date.now(), entries: [] }] })
     const server = { ...clone(DEF), _ts: t0, workouts: [{ id: 'sw1', d: '2026-09-20', start: t0, end: t0 + 1, entries: [] }],
       favEx: ['0025'], exNotes: { '0025': 'seat 4, pin 7' }, week: { 1: 'r1' }, routines: [{ id: 'r1', name: 'A', ex: [], _ts: t0 }], _rev: 7 }
-    api.mockImplementation(async (p, o) => (o?.method === 'PUT' ? { ok: true, rev: 8 } : { state: clone(server), rev: 7 }))
+    api.mockImplementation(localBodyResponse(async (p, o) => (o?.method === 'PUT' ? { ok: true, rev: 8 } : { state: clone(server), rev: 7 })))
     useStore.getState().setUser({ id: 'u1', name: 'x' }, { adopt: true })
     await useStore.getState().adoptProfile(async () => true)
     const put = puts().at(-1)
@@ -82,7 +85,7 @@ describe('sign-in asks about a plan built while signed out, and keeps what it dr
   }
   it('a guest with only a plan is asked; "Add them" keeps the routines, the free plan days, notes and cards', async () => {
     guestPlan()
-    api.mockImplementation(async (p, o) => (o?.method === 'PUT' ? { ok: true, rev: 8 } : { state: server(), rev: 7 }))
+    api.mockImplementation(localBodyResponse(async (p, o) => (o?.method === 'PUT' ? { ok: true, rev: 8 } : { state: server(), rev: 7 })))
     useStore.getState().setUser({ id: 'u1', name: 'x' }, { adopt: true })
     const ask = vi.fn(async () => true)
     await useStore.getState().adoptProfile(ask)
@@ -95,7 +98,7 @@ describe('sign-in asks about a plan built while signed out, and keeps what it dr
   })
   it('"Keep profile as is" keeps the device\'s copy aside, to save as a backup file', async () => {
     guestPlan()
-    api.mockImplementation(async (p, o) => (o?.method === 'PUT' ? { ok: true, rev: 8 } : { state: server(), rev: 7 }))
+    api.mockImplementation(localBodyResponse(async (p, o) => (o?.method === 'PUT' ? { ok: true, rev: 8 } : { state: server(), rev: 7 })))
     useStore.getState().setUser({ id: 'u1', name: 'x' }, { adopt: true })
     await useStore.getState().adoptProfile(async () => false)
     expect(useStore.getState().S.routines.map(r => r.id)).toEqual(['sr1'])

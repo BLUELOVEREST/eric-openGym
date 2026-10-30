@@ -16,6 +16,9 @@ import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { openProfileReader } from '../storage/profile-reader.js';
+import { composeBodyState } from '../integrations/sparkygym-body-model.js';
+import { syncDirectory } from '../storage/file-sync.js';
 import * as cfgStore from './config.js';
 import { adapterFor } from './adapters/index.js';
 import * as payloadLib from './core/payload.js';
@@ -36,6 +39,10 @@ export { hashPlan, buildPrompt };
 
 const DATA = process.env.DATA_DIR || '/data';
 const COACH_DIR = path.join(DATA, 'coach');
+let profileReader;
+// server.js imports this module before its one-time profile importer runs.
+// Open only on first use; a failed open must not cache an unready source.
+const profiles = () => profileReader ||= openProfileReader(DATA);
 
 // Five minutes by default. A local model on a small CPU box can legitimately need more; a
 // cloud API that needs more has a problem. COACH_JOB_TIMEOUT_MS overrides, never below one minute.
@@ -71,23 +78,39 @@ function patchUser(uid, patch) {
  *  outlives the day only until the next job or forget touches it, and counts for nothing once
  *  the date has passed. A job still waiting in the queue is dropped here; one already mid-call
  *  is cancelled where the adapter can be (the HTTP ones — a spawned runtime runs to its end),
- *  and either way finishes without writing anything back (see finish). */
-export function clearUser(uid) {
-  const { daily } = readUser(uid);
-  try { fs.unlinkSync(userFile(uid)); } catch { /* nothing to clear */ }
-  if (daily?.date === todayISO()) writeUser(uid, { ...EMPTY, daily });
+ *  and either way finishes without writing anything back (see finish). Permanent account
+ *  deletion also removes the spending record and this user's instance-log entries. */
+export function clearUser(uid, { permanent = false } = {}) {
+  // Revoke running/queued work even if disk cleanup fails and deletion must be retried.
+  const seq = (forgetSeq.get(uid) || 0) + 1;
+  forgetSeq.set(uid, seq);
+  if (permanent) permanentForgetSeq.set(uid, seq);
   const queued = queue.findIndex(j => j.uid === uid);
   if (queued >= 0) { queue.splice(queued, 1); inflight.delete(uid); }
   aborts.get(uid)?.abort();
-  forgetSeq.set(uid, (forgetSeq.get(uid) || 0) + 1);
   invalidateCohort();
+
+  let daily;
+  if (!permanent) {
+    try { ({ daily } = JSON.parse(fs.readFileSync(userFile(uid), 'utf8'))); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
+  for (const file of [userFile(uid), userFile(uid) + '.tmp']) {
+    try { fs.unlinkSync(file); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
+  if (permanent) {
+    // A retry after unlink succeeded but fsync failed still owes the directory barrier.
+    try { syncDirectory(COACH_DIR); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
+  if (!permanent && daily?.date === todayISO()) writeUser(uid, { ...EMPTY, daily });
+  if (permanent) cfgStore.save({ log: (cfgStore.load().log || []).filter(entry => entry.uid !== uid) });
 }
 
-/** Every profile with a state file — the population a cohort is drawn from. */
+/** Every native profile — the population a cohort is drawn from. */
 export function listUserIds() {
-  try {
-    return fs.readdirSync(DATA).filter(f => /^state-[a-zA-Z0-9_-]+\.json$/.test(f)).map(f => f.slice(6, -5));
-  } catch { return []; }
+  return profiles().listUserIds();
 }
 
 /* ---------- "compare with others" opt-in ----------
@@ -102,8 +125,9 @@ export function setShare(uid, share) {
 }
 
 export function readState(uid) {
-  try { return JSON.parse(fs.readFileSync(path.join(DATA, 'state-' + safe(uid) + '.json'), 'utf8')); }
-  catch { return null; }
+  const reader = profiles();
+  const state = reader.getProfile(uid)?.state ?? null;
+  return state ? composeBodyState(state, reader.getBodyProfile(uid)) : null;
 }
 
 /* ---------- caps ---------- */
@@ -171,6 +195,7 @@ const queue = [];
 let running = 0;
 const inflight = new Set();     // uids with a job queued or running (FR-07 single-flight)
 const forgetSeq = new Map();    // uid → bumped by every clearUser; a job carries the value it saw at enqueue
+const permanentForgetSeq = new Map(); // suppress late instance-log entries after account deletion
 const aborts = new Map();       // uid → AbortController of the provider call in flight, for clearUser to pull
 
 class CoachError extends Error {
@@ -280,6 +305,7 @@ export function whyUnusable(errors) {
 }
 
 function finish(job, result) {
+  if ((permanentForgetSeq.get(job.uid) || 0) > job.forgetSeq) return;
   cfgStore.logJob({
     at: new Date().toISOString(), uid: job.uid, kind: job.kind, trigger: job.trigger,
     outcome: result.outcome, errorClass: result.errorClass || null,

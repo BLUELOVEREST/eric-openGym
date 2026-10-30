@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
+import { useBodyState } from '../store/useBodyState.js'
+import BodySource from '../components/BodySource.jsx'
+import { bodyReadOnly } from '../lib/sparkygym-client.js'
 import { dayPhotosOf } from '../lib/day-photos.js'
 import { EXIDX, matchExercise, betterWeight, isAssisted } from '../lib/exercises.js'
 import { lastBW, streakWeeks, setLabel, modeOf, effortOf, entriesForExercise, metricEntriesForExercise, metricModeForEntry, bestWeightForEntry, completedRepsOf, workoutDay, workoutAt, lifetimeVolume } from '../lib/history.js'
@@ -473,7 +476,7 @@ export function WeeklyPlanVolume({ S }) {
 
 export default function Stats() {
   const nav = useNavigate()
-  const S = useStore(s => s.S)
+  const S = useBodyState()
   const [range, setRange] = useState(90)
   // Plan's "Weekly muscle volume" row lands here (/stats?focus=weekly-volume). The router is a
   // HashRouter, so the query sits in the hash; the scroll waits a frame for the page's own
@@ -772,11 +775,12 @@ export default function Stats() {
 
     <div className="cols">
       <div className="card">
+        <BodySource />
         <div className="row between bw-head" style={{ marginBottom: 8 }}>
           <h2 style={{ margin: 0 }}>{t('Body weight')}</h2>
           <div className="row" style={{ gap: 8 }}>
             <Button size="sm" icon="target" style={S.targetW ? { color: 'var(--yellow)' } : undefined} onClick={goalSheet}>{S.targetW ? fmtNum(S.targetW) : t('Goal')}</Button>
-            <Button size="sm" icon="plus" onClick={() => bwSheet()}>{t('Log')}</Button>
+            <Button size="sm" icon={bodyReadOnly() ? 'scale' : 'plus'} onClick={() => bwSheet()}>{bodyReadOnly() ? t('Weigh-ins') : t('Log')}</Button>
           </div>
         </div>
         <Segmented className="seg-range" value={range} onChange={setRange}

@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+vi.mock('../lib/sparkygym-client.js', () => import('../test-fixtures/local-body-client.js'))
 
 /* The update from v1.3.9 while that app still owed the server a change (QA retest 2026-10-06): its
    offline setting, plan and note changes were undone on the first sync when another device had

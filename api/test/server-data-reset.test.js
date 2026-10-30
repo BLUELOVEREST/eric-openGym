@@ -1,3 +1,4 @@
+import { readProfile } from './profile-fixture.mjs';
 /* "Reset everything" stamps the profile with `resetAt` (and `resetIds`, the names it wiped). The
    stamp only moves forward on the server: a write without it, or with an older one — a client from
    before it, a backup restored over the profile — keeps the stored one, so the devices that saw
@@ -48,7 +49,7 @@ test('PUT /api/data keeps the reset stamp when a write lacks it or carries an ol
     const r = await fetch(`${h.api}/api/data`, { method: 'PUT', headers: headers(), body: JSON.stringify(body) });
     return { status: r.status, body: await r.json() };
   };
-  const onDisk = () => JSON.parse(fs.readFileSync(path.join(h.dataDir, `state-${UID}.json`), 'utf8'));
+  const onDisk = () => readProfile(h.dataDir, UID);
   const ids = { workouts: ['w-old'] };
 
   // the reset
@@ -80,7 +81,7 @@ test('PUT /api/data: a profile never reset gets no stamp', async t => {
   const h = await startServer(t);
   const r = await fetch(`${h.api}/api/data`, { method: 'PUT', headers: headers(), body: JSON.stringify({ state: { _ts: 1, workouts: [], routines: [] } }) });
   assert.equal(r.status, 200);
-  const doc = JSON.parse(fs.readFileSync(path.join(h.dataDir, `state-${UID}.json`), 'utf8'));
+  const doc = readProfile(h.dataDir, UID);
   assert.equal('resetAt' in doc, false);
   assert.equal('resetIds' in doc, false);
 });

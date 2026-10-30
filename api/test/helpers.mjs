@@ -9,6 +9,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { initializeProfileStorage } from '../storage/profile-migration.js';
+import { openIntegrationStore } from '../storage/integration-store.js';
 
 /* The port a spawned server.js actually bound.
  *
@@ -50,8 +52,14 @@ export function tempData() {
   return dir;
 }
 
+const initializedProfileDirs = new Set();
 export function writeState(dir, uid, S) {
-  fs.writeFileSync(path.join(dir, 'state-' + uid + '.json'), JSON.stringify(S));
+  const store = initializedProfileDirs.has(dir)
+    ? openIntegrationStore(path.join(dir, 'profiles.sqlite'))
+    : initializeProfileStorage(dir, { users: [{ id: uid }] });
+  initializedProfileDirs.add(dir);
+  try { store.commitProfile(uid, store.getRevision(uid) ?? 0, S); }
+  finally { store.close(); }
 }
 
 /* Fixture dates that follow the calendar.

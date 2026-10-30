@@ -1,6 +1,6 @@
 # openGym Helm chart. Mirrors kubernetes/ (the plain manifests); docs/SELF_HOSTING_KUBERNETES.md
-# explains the choices. Always one replica: the API keeps its data in JSON files on one volume,
-# so a second pod would be a second writer.
+# explains the choices. Always one replica: the API owns the auth registry and SQL profiles
+# on one volume; migration must not overlap an old JSON-writing pod.
 
 imagePullSecrets: []
 nameOverride: ""

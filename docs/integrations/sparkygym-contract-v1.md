@@ -45,8 +45,8 @@ alone never implies domain acceptance. Unknown capabilities fail explicitly.
 
 | Producer | Allowed resources | Authority |
 | --- | --- | --- |
-| sparkyfitness | body_measurement, body_goal | Body data only |
-| opengym | exercise, workout, schedule_summary, personal_media | Training and personal media only |
+| sparkyfitness | body_definition, body_measurement, body_goal, schedule_summary | Body values and dated daily training hints |
+| opengym | exercise, workout, personal_media | Actual training and personal media only |
 
 E-class statistical resources are intentionally absent until their separate design.
 Body-goal payloads support target weight, not weekly weight-rate goals. No user IDs,

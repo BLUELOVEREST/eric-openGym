@@ -1,3 +1,4 @@
+import { writeProfile } from './profile-fixture.mjs';
 /* The missed-workout nudge, end to end through the real reminder tick (server.js in a child,
    REMINDER_TICK_MS shortened). The nudge is owed from 20:00 to 21:30 on the user's clock, so
    instead of faking the time each test picks the zone where it is 20:xx right now — which also
@@ -38,7 +39,7 @@ async function startServer(t, subs = [sub]) {
   t.after(() => { child.kill('SIGKILL'); fs.rmSync(dataDir, { recursive: true, force: true }); });
   h.port = await boundPort(child, () => h.log);
   h.api = `http://127.0.0.1:${h.port}`;
-  h.write = state => fs.writeFileSync(path.join(dataDir, 'state-' + UID + '.json'), JSON.stringify(state));
+  h.write = state => writeProfile(dataDir, UID, state);
   h.db = () => JSON.parse(fs.readFileSync(path.join(dataDir, 'db.json'), 'utf8'));
   return h;
 }

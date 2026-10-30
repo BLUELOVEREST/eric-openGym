@@ -41,7 +41,7 @@ export const measurementUnitLabel = unit => unit === 'none' ? '' : unit
 // A unit where 0 is a reading, not an empty field: 0 % or a score of 0.
 export const zeroIsReading = unit => unit === '%' || unit === 'none'
 
-export const measurementUnit = (unit, field) => field?.key === 'bodyFat' ? '%' : unitOf(field) || (unit === 'lb' ? 'in' : 'cm')
+export const measurementUnit = (unit, field) => field?.value_type === 'text' ? 'none' : field?.key === 'bodyFat' ? '%' : unitOf(field) || (unit === 'lb' ? 'in' : 'cm')
 export const toMeasurementDisplay = (value, unit, field) => {
   if (value == null) return null
   const display = measurementUnit(unit, field)
@@ -138,6 +138,8 @@ export function measurementValue(entry, key) {
   if (!entry) return null
   if (!key.startsWith('other:')) return valid(entry[key], key === 'bodyFat' ? '%' : null)
   const row = (entry.other || []).find(o => o.id === key.slice(6))
+  if (row?.value_type === 'text' && typeof row.value === 'string') return row.value
+  if (row?.value_type && Number.isFinite(row.value)) return row.value
   return valid(row?.value, unitOf(row))
 }
 
@@ -148,7 +150,7 @@ export function enabledMeasurementFields(state) {
   const enabled = new Set(state.measurementEnabled || DEFAULT_MEASUREMENT_KEYS)
   const builtins = MEASUREMENT_FIELDS.filter(f => enabled.has(f.key))
   const custom = (state.customMeasurements || []).filter(c => c.enabled !== false)
-    .map(c => ({ key: 'other:' + c.id, label: c.name, group: 'Other', custom: true, ...withUnit(c) }))
+    .map(c => ({ key: 'other:' + c.id, label: c.name, group: 'Other', custom: true, ...(c.value_type ? { value_type: c.value_type } : {}), ...withUnit(c) }))
   return [...builtins, ...custom]
 }
 
@@ -161,7 +163,7 @@ export function measurementSeries(state, key, range = 0, now = Date.now()) {
   return (state.measurements || []).map(entry => {
     const raw = measurementValue(entry, key)
     const at = new Date(entry.d + 'T12:00:00').getTime()
-    if (raw == null || at < cutoff) return null
+    if (raw == null || typeof raw !== 'number' || !Number.isFinite(raw) || at < cutoff) return null
     const stored = key.startsWith('other:') ? entry.other?.find(o => o.id === key.slice(6)) : null
     // An incomplete backup may retain a reading without its custom definition.
     const displayField = unitOf(field) ? field : { ...field, ...withUnit(stored) }

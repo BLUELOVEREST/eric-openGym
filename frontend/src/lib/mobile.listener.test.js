@@ -55,6 +55,19 @@ describe('initReminderSync — the App plugin rejecting must not go unhandled', 
 })
 
 describe('onAppActive — the App plugin rejecting must not go unhandled', () => {
+  it('can remove a native focus listener even when stopped before registration resolves', async () => {
+    const remove = vi.fn(async () => {})
+    let resolve
+    mocks.App = { calls: 0, addListener() { this.calls++; return new Promise(r => { resolve = r }) } }
+    const m = await load()
+    const stop = m.onAppActive(() => {})
+    await settled(() => mocks.App.calls > 0)
+    expect(typeof stop).toBe('function')
+    stop()
+    resolve({ remove })
+    await settled(() => remove.mock.calls.length > 0)
+    expect(remove).toHaveBeenCalledOnce()
+  })
   it('reaches the catch instead of raising an unhandled rejection', async () => {
     const m = await load()
     m.onAppActive(() => {})

@@ -23,6 +23,15 @@ describe('convertWeight', () => {
 })
 
 describe('convertStateUnit', () => {
+  it('converts workout goal snapshots with body weight while preserving intrinsic row IDs', () => {
+    const state = { unit: 'kg', workouts: [{ id: 'w', bw: 80, targetW: 75, entries: [{ id: 'squat', instance_id: 'exercise-instance', sets: [{ set_id: 'set-instance', w: 20 }] }] }], active: { id: 'a', targetW: 75, entries: [] } }
+    const next = convertStateUnit(state, 'lb')
+    expect(next.workouts[0].targetW).toBe(165.3)
+    expect(next.active.targetW).toBe(165.3)
+    expect(next.workouts[0].entries[0].instance_id).toBe('exercise-instance')
+    expect(next.workouts[0].entries[0].sets[0].set_id).toBe('set-instance')
+    expect(state.workouts[0].targetW).toBe(75)
+  })
   const S = {
     unit: 'kg', targetW: 80, bodyweight: [{ d: '2026-01-01', w: 82.4, t: 1 }],
     exWeights: { '0025': { w: 80, d: '2026-01-01' }, legacy: 100 }, barWeights: { '0025': 15 },

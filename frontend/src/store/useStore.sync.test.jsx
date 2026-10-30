@@ -13,6 +13,7 @@ vi.mock('./useUI.js', () => ({ useUI: { getState: () => ({ toast }) } }))
 import { api } from '../lib/api.js'
 import { DEF, useStore } from './useStore.js'
 import { editCompletedSession } from '../lib/session-edit.js'
+import { setBodyOwner, useSparkyGym } from '../lib/sparkygym-client.js'
 
 const clone = value => JSON.parse(JSON.stringify(value))
 const routine = id => ({ id, name: id, ex: [] })
@@ -21,7 +22,11 @@ const httpError = (status, data) => Object.assign(new Error(data?.error || 'HTTP
 const sync = () => JSON.parse(localStorage.getItem('gym_sync'))
 const puts = () => api.mock.calls.filter(([, o]) => o?.method === 'PUT').map(([, o]) => JSON.parse(o.body))
 const gets = () => api.mock.calls.filter(([, o]) => !o)
-const signedIn = (S, extra = {}) => useStore.setState({ S, user: { id: 'user-1' }, ready: true, ...extra })
+const signedIn = (S, extra = {}) => {
+  setBodyOwner('user-1')
+  useSparkyGym.setState({ body: { managed: false, connection_id: null, source: null, revision: 0, definitions: [], measurements: [], target: null } })
+  useStore.setState({ S, user: { id: 'user-1' }, ready: true, ...extra })
+}
 
 beforeEach(() => {
   localStorage.clear()
