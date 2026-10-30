@@ -1,0 +1,128 @@
+name: Build Eric Android APK
+on:
+  push:
+    tags: ['v*-eric.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing immutable tag, e.g. v1.4.3-eric.2'
+        required: true
+permissions:
+  contents: write
+concurrency:
+  group: eric-apk-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+jobs:
+  apk:
+    if: github.repository == 'BLUELOVEREST/eric-openGym'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      REQUESTED_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, same as upstream CI
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Validate immutable tag and version
+        run: |
+          set -euo pipefail
+          node scripts/ci/eric-apk.mjs "$REQUESTED_TAG"
+      - name: Verify signing configuration
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_CERT_SHA256: ${{ secrets.ANDROID_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          test -n "$ANDROID_KEYSTORE_BASE64"
+          test -n "$ANDROID_STORE_PASSWORD"
+          test -n "$ANDROID_KEY_PASSWORD"
+          test -n "$ANDROID_KEY_ALIAS"
+          test -n "$ANDROID_CERT_SHA256"
+      - name: Install locked dependencies and validate source
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm ci --prefix frontend --no-audit --no-fund
+          node --test scripts/ci/eric-apk.test.mjs scripts/ci/verify-eric-apk.test.mjs
+          node scripts/catalogue/build.mjs --check
+          node scripts/build-coach-assets.mjs --check
+          node scripts/catalogue/check-media.mjs
+          node frontend/scripts/check-locales.mjs
+          node frontend/scripts/check-source-strings.mjs --strict
+          npm test --prefix frontend -- --maxWorkers=2
+      - name: Build mobile bundle with repository media
+        run: |
+          set -euo pipefail
+          export VITE_MOBILE=1 VITE_APK_VARIANT=standard VITE_BUILTIN_CLIP_PX=180
+          npm run build --prefix frontend
+          node scripts/catalogue/stage-media.mjs frontend/dist
+          cd frontend
+          npx cap sync android
+          node scripts/check-mobile-bundle.mjs
+      - name: Build unsigned ARM64 release
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36' 'build-tools;36.0.0'
+          cd frontend/android
+          ./gradlew --no-daemon testSideloadReleaseUnitTest assembleSideloadRelease "-PericReleaseTag=$RELEASE_TAG"
+      - name: Sign and verify APK
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_CERT_SHA256: ${{ secrets.ANDROID_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          trap 'rm -f "$RUNNER_TEMP/eric-opengym.p12"' EXIT
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/eric-opengym.p12"
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          mkdir -p release-apk
+          "$BT/zipalign" -P 16 -f 4 frontend/android/app/build/outputs/apk/sideload/release/app-sideload-release-unsigned.apk "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" sign --ks "$RUNNER_TEMP/eric-opengym.p12" --ks-pass env:ANDROID_STORE_PASSWORD --key-pass env:ANDROID_KEY_PASSWORD --ks-key-alias "$ANDROID_KEY_ALIAS" --out "release-apk/$APK_NAME" "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" verify --verbose --print-certs "release-apk/$APK_NAME" > release-apk/signing-certificate.txt
+          "$BT/zipalign" -c -P 16 4 "release-apk/$APK_NAME"
+          "$BT/aapt" dump badging "release-apk/$APK_NAME" > "$RUNNER_TEMP/badging.txt"
+          node scripts/ci/verify-eric-apk.mjs "$RUNNER_TEMP/badging.txt" release-apk/signing-certificate.txt
+          cd release-apk
+          sha256sum "$APK_NAME" > "$APK_NAME.sha256"
+          cp "$APK_NAME.sha256" SHA256SUMS
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: openGym-${{ env.VERSION_NAME }}-arm64-release
+          path: |
+            release-apk/*.apk
+            release-apk/*.sha256
+            release-apk/SHA256SUMS
+            release-apk/signing-certificate.txt
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish verified APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: BLUELOVEREST/eric-openGym
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' > "$RUNNER_TEMP/release-draft"; then
+            test "$(cat "$RUNNER_TEMP/release-draft")" = true || { echo 'Published releases are immutable'; exit 1; }
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "openGym $VERSION_NAME" --notes 'Custom ARM64 Release APK with 180 px repository media. Uses the original package ID with a custom signing key: back up and uninstall the official app before first installation. Later custom versions update in place. Corresponding source and build instructions are in this tagged repository; see LICENSE, NOTICE.md and docs/ERIC_APK_RELEASES.md.'
+          fi
+          gh release upload "$RELEASE_TAG" "release-apk/$APK_NAME" "release-apk/$APK_NAME.sha256" release-apk/SHA256SUMS release-apk/signing-certificate.txt
+          gh release edit "$RELEASE_TAG" --draft=false --latest

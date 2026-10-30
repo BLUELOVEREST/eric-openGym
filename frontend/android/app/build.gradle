@@ -1,5 +1,15 @@
 apply plugin: 'com.android.application'
 
+def ericTag = providers.gradleProperty('ericReleaseTag').orNull
+def ericNumber = null
+if (ericTag != null) {
+    if (!(ericTag ==~ /v[0-9]+\.[0-9]+\.[0-9]+-eric\.[1-9][0-9]*/)) {
+        throw new GradleException('Invalid Eric release tag')
+    }
+    ericNumber = ericTag.tokenize('.').last().toLong()
+    if (ericNumber > 1999999999L) throw new GradleException('Eric versionCode overflow')
+}
+
 android {
     namespace = "ch.duartesantos.opengym"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -12,6 +22,11 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 28
         versionName "1.4.3"
+        if (ericTag) {
+            if (!ericTag.startsWith("v${versionName}-eric.")) throw new GradleException('Eric tag disagrees with Android base version')
+            versionCode = (100000000L + ericNumber).intValue()
+            versionName = ericTag.substring(1)
+        }
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -28,7 +43,8 @@ android {
             // run ARM code through translation anyway. Leaving them out takes about 12 MB off
             // the APK. Release only: the debug build keeps x86_64 for the emulator test rig.
             ndk {
-                abiFilters 'arm64-v8a', 'armeabi-v7a'
+                if (ericTag) abiFilters 'arm64-v8a'
+                else abiFilters 'arm64-v8a', 'armeabi-v7a'
             }
         }
         debug {

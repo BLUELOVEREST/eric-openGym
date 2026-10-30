@@ -10,6 +10,7 @@ This guide supplements those rules for the SparkyFitness integration.
 - This repository is `/home/zhangzhicheng/workspace/own/eric-openGym`.
 - `origin`: `https://gitea.blueloverest.site:44443/zhangzhicheng/eric-openGym.git`.
 - `upstream`: `https://github.com/DuarteSantos8/openGym.git`; push URL is disabled.
+- `github`: `git@github.com:BLUELOVEREST/eric-openGym.git`; public APK build mirror only. Develop on `opengym-custom-eric-flow`, not imported upstream `main`. APK workflow: `.github/workflows/eric-apk.yml`; contract/signing/recovery: `docs/ERIC_APK_RELEASES.md`. Keep the original package ID with a persistent custom signing key; first official-to-custom installation requires backup/uninstall. Native versionCode is 100000000 plus the global openGym Eric number. Only repository 180 px media and ARM64 sideload Release are allowed in CI. Do not modify published tags, copy private signing material into Git, or let the updater target upstream releases.
 - Imported `main` is the current upstream baseline. Integration work is isolated on
   `codex/sparkyfitness-integration`, worktree `/tmp/opengym-sparky-integration-20261029`.
   Do not assume unaccepted work has landed in main or that remote branches were pushed.

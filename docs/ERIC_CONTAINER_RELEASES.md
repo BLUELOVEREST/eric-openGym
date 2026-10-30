@@ -57,7 +57,14 @@ into SparkyFitness, expose an independent media service or ship larger app-only
 assets. No GitHub workflow or official registry publication is added; GitHub
 release choices remain pending.
 
-## Deferred APK Publishing
+## APK Publishing
+
+GitHub access and the public build mirror are now confirmed. The approved
+replacement install, signing and ARM64 workflow contract is
+[Eric Android Releases](ERIC_APK_RELEASES.md). The initial deferred checklist
+below is historical; workflow setup is tracked in
+`docs/integrations/github-apk-plan.md`. Phone acceptance still requires the
+completed APK and does not follow from service-image acceptance.
 
 The owner confirmed on 2026-10-30: Gitea builds container images; GitHub will build
 APKs after GitHub network access is restored. Do not move APK builds to Gitea or

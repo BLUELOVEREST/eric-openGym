@@ -44,6 +44,8 @@ Follow the root `AGENTS.md`, `CLAUDE.md`, and
 
 ## Checks
 
+Fork Android releases retain the original application ID. `-PericReleaseTag=vX.Y.Z-eric.N` opts into the custom native version and ARM64-only Release ABI; default upstream builds remain unchanged. `src/lib/release-version.js` compares upstream bases and numeric Eric counters, including Vite APP_BUILD metadata. `src/lib/update.js` uses only BLUELOVEREST/eric-openGym. Follow `../docs/ERIC_APK_RELEASES.md`; never embed a GitHub token or rotate the persistent signing identity as part of a build.
+
 Run `npm test`, `node scripts/check-locales.mjs`, and
 `node scripts/check-source-strings.mjs --strict` from `frontend/`. Every new string
 must be translated additively in all locale packs, including pt-BR overrides.

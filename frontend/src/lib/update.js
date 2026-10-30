@@ -11,32 +11,11 @@
 
 import { MOBILE } from './mobile.js'
 import { APK_VARIANTS, APK_VARIANT } from './apk-variant.js'
+import { compareReleaseVersions } from './release-version.js'
 
-const REPO = 'DuarteSantos8/openGym'
+const REPO = 'BLUELOVEREST/eric-openGym'
 const LATEST_URL = `https://api.github.com/repos/${REPO}/releases/latest`
 export const RELEASES_PAGE = `https://github.com/${REPO}/releases/latest`
-
-/**
- * Compares two semver strings (e.g. "1.2.11" vs "1.3.0").
- * Returns  1 if a > b, -1 if a < b, 0 if equal.
- *
- * Build metadata is dropped first. A version that says which build it came from carries it as
- * semver build metadata ("1.3.8+2026-09-18.2"), and splitting that on "." makes the patch NaN —
- * which read as 0, so a release tagged that way compared as 1.3.0 and a real update went
- * unnoticed. Semver says the metadata plays no part in precedence, so "1.3.7+anything" and
- * "1.3.7" are the same version here. Dropped on both operands, so it holds whichever side
- * carries it.
- */
-function compareSemver(a, b) {
-  const pa = a.replace(/^v/, '').split('+')[0].split('.').map(Number)
-  const pb = b.replace(/^v/, '').split('+')[0].split('.').map(Number)
-  for (let i = 0; i < 3; i++) {
-    const diff = (pa[i] || 0) - (pb[i] || 0)
-    if (diff > 0) return 1
-    if (diff < 0) return -1
-  }
-  return 0
-}
 
 /**
  * Checks GitHub for a newer version. `releases/latest` is the newest release that is neither a
@@ -63,7 +42,7 @@ async function fetchLatest() {
   const latest = await res.json()
   const latestVersion = String(latest.tag_name || '').replace(/^v/, '')
   if (!latestVersion) return { hasUpdate: false, latestVersion: __APP_VERSION__, apkUrl: null, hashUrl: null }
-  const hasUpdate = compareSemver(latestVersion, __APP_VERSION__) > 0
+  const hasUpdate = compareReleaseVersions(latestVersion, __APP_VERSION__) > 0
   const { apk, hash } = pickApk(latest.assets || [])
   return { hasUpdate, latestVersion, apkUrl: apk?.browser_download_url || null, hashUrl: hash?.browser_download_url || null }
 }
