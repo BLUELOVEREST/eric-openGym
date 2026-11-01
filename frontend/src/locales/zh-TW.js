@@ -1,4 +1,6 @@
 export default {
+  "Start new workout": "開始新訓練",
+  "No training arrangement": "暫無訓練安排",
   "Training hints": "訓練提示",
   "Morning": "早晨",
   "Noon": "中午",

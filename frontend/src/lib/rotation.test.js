@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { scheduleModeOf, queueRecovery, rotationIds, startPass, saveRotation, startNewPass, stopPass, refillAfter, refillIfComplete, chooseRotation, chooseFixedWeek, segmentAt, sequenceOf, isSimpleSequence, REST } from './rotation.js'
+import { scheduleModeOf, queueRecovery, rotationIds, startPass, saveRotation, startNewPass, stopPass, refillAfter, refillIfComplete, chooseRotation, chooseFixedWeek, segmentAt, sequenceOf, isSimpleSequence, REST, rotationRestOn } from './rotation.js'
 import { queueNext, queueRemaining, queueView } from './queue.js'
 import { effectiveRoutineIds } from './history.js'
 
@@ -113,6 +113,7 @@ describe('editing the sequence', () => {
     expect(s.queue.strict).toBeUndefined()
     expect(s.queue.startsOn).toBe('2026-09-13')
     expect(queueView(s, TODAY).waiting).toBe(true)
+    expect(rotationRestOn(s, TODAY)).toBe(false)
     expect(queueRemaining(s)).toEqual(['a'])
   })
 
@@ -464,6 +465,12 @@ describe('rest days and repeats (#536)', () => {
     expect(queueView(s, '2026-09-13').waiting).toBe(true)
     expect(queueNext(s, '2026-09-13', '2026-09-13')).toBeNull()
     expect(effectiveRoutineIds(s, '2026-09-13', '2026-09-13')).toEqual([])
+    expect(rotationRestOn(s, '2026-09-13')).toBe(true)
+    expect(rotationRestOn(s, TODAY)).toBe(false)
+    expect(rotationRestOn(s, '2026-09-14')).toBe(false)
+    expect(rotationRestOn({ ...s, rotation: null }, '2026-09-13')).toBe(false)
+    expect(rotationRestOn({ ...s, rotation: { ...s.rotation, id: 'other' } }, '2026-09-13')).toBe(false)
+    expect(rotationRestOn({ ...s, queue: { ...s.queue, ids: ['a'] } }, '2026-09-13')).toBe(false)
     expect(queueNext(s, '2026-09-14', '2026-09-14')).toBe('c')
     // and round the end: the rest before 'c' was the only one, so 'a, b' follow 'c' straight away
     s.workouts.push(w('c', '2026-09-14', NOW + 2 * 86400000))
@@ -477,6 +484,10 @@ describe('rest days and repeats (#536)', () => {
     s.workouts = [w('a', TODAY, NOW)]
     expect(refillAfter(s, s.workouts[0], TODAY, NOW + 1)).toBe(true)
     expect(s.queue).toMatchObject({ ids: ['b'], startsOn: '2026-09-15' })
+    expect(rotationRestOn(s, '2026-09-13')).toBe(true)
+    expect(rotationRestOn(s, '2026-09-14')).toBe(true)
+    expect(rotationRestOn(s, TODAY)).toBe(false)
+    expect(rotationRestOn(s, '2026-09-15')).toBe(false)
   })
 
   it('an edit keeps the running segment and what was logged in it', () => {

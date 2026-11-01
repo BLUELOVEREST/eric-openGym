@@ -40,13 +40,14 @@ test('isolated HTTP/private fixture pairs with PSK, requires owner acceptance, v
   const og = http.createServer(async (req, res) => { if (!await service.handle(req, res)) { res.writeHead(404); res.end() } })
   sfOrigin = await listen(sf); ogOrigin = await listen(og)
   const store = openIntegrationStore(':memory:')
-  service = createSparkyGymIntegration({ store, secret: randomBytes(32).toString('hex'), origin: ogOrigin, readOwner: req => req.headers.authorization === 'Bearer owner-fixture' ? { id: 'owner-fixture' } : null, csrfOk: () => true })
+  service = createSparkyGymIntegration({ store, secret: randomBytes(32).toString('hex'), origin: 'https://public-og.example', readOwner: req => req.headers.authorization === 'Bearer owner-fixture' ? { id: 'owner-fixture' } : null, csrfOk: () => true })
   t.after(async () => { await service.stop(); await close(og); await close(sf); store.close() })
   service.start()
-  const invitation = { version: 1, connection_id: id, sf_origin: sfOrigin, sf_owner_ref: 'sf-owner-fixture', sf_nonce: sfNonce, secret: psk, expires_at: new Date(Date.now() + 600000).toISOString(), peer_origin: ogOrigin, scopes: ['body_measurement', 'workout', 'exercise'], include_history: false }
-  const claimed = await fetch(ogOrigin + '/api/integrations/sparkygym/claim', { method: 'POST', headers: { Authorization: 'Bearer owner-fixture', 'Content-Type': 'application/json' }, body: JSON.stringify({ invitation, allow_http: true, allow_private_network: true }) })
+  const invitation = { version: 1, connection_id: id, sf_origin: sfOrigin, sf_owner_ref: 'sf-owner-fixture', sf_nonce: sfNonce, secret: psk, expires_at: new Date(Date.now() + 600000).toISOString(), peer_origin: ogOrigin, scopes: ['body_definition', 'body_measurement', 'body_goal', 'workout', 'exercise', 'schedule_summary', 'personal_media'], include_history: true }
+  const claimed = await fetch(ogOrigin + '/api/integrations/sparkygym/claim', { method: 'POST', headers: { Authorization: 'Bearer owner-fixture', 'Content-Type': 'application/json' }, body: JSON.stringify({ invitation }) })
   assert.equal(claimed.status, 200)
   await until(() => !!binding)
+  assert.equal(binding.og_origin, ogOrigin)
   assert.equal(store.getConnection('owner-fixture', id).status, 'pending')
   const bytes = Buffer.from(JSON.stringify(binding)), timestamp = String(Math.floor(Date.now() / 1000)), keyId = id + '_sf', path = '/api/integrations/v1/pair/accept'
   const accepted = await fetch(ogOrigin + path, { method: 'POST', headers: { 'X-SparkyGym-Key-Id': keyId, 'X-SparkyGym-Request-Id': id, 'X-SparkyGym-Timestamp': timestamp, 'X-SparkyGym-Signature': signControl('POST', path, bytes, keyId, timestamp, keys.incoming, id) }, body: bytes })
@@ -54,6 +55,7 @@ test('isolated HTTP/private fixture pairs with PSK, requires owner acceptance, v
   assert.equal(accepted.status, 200)
   assert.equal(verifyResponse(id, 200, responseBytes, accepted.headers.get('x-sparkygym-key-id'), accepted.headers.get('x-sparkygym-timestamp'), accepted.headers.get('x-sparkygym-signature'), keys.outgoing), true)
   await until(() => controls.some(value => value.action === 'request'))
+  assert.equal(controls.find(value => value.action === 'request').include_history, false)
   store.commitProfile('owner-fixture', store.getRevision('owner-fixture'), { workouts: [{ id: 'fixture-workout', d: '2026-10-29', name: 'Fixture session', entries: [{ id: 'bench', sets: [{ w: 50, r: 5, done: true }] }] }] })
   service.afterCommitWake()
   await until(() => received.some(value => value.resource === 'workout'))

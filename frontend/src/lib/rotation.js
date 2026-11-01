@@ -89,6 +89,18 @@ export function segmentAt(seq, at = 0) {
   return { start, ids, rest, next: k }
 }
 
+/** Only explicit rest steps immediately before the managed segment, not every waiting gap. */
+export function rotationRestOn(S, iso) {
+  const q = queueOf(S)
+  if (!q?.rotationId || q.rotationId !== S.rotation?.id || iso >= q.startsOn) return false
+  const seq = sequenceOf(S)
+  const seg = segmentAt(seq, S.rotation.at)
+  if (!seg || seg.ids.length !== q.ids.length || seg.ids.some((id, i) => id !== q.ids[i])) return false
+  let rests = 0
+  for (let i = (seg.start + seq.length - 1) % seq.length; seq[i] === REST; i = (i + seq.length - 1) % seq.length) rests++
+  return rests > 0 && iso >= addDays(q.startsOn, -rests)
+}
+
 /** Workouts that could have credited `q`'s pass: dated on/after its startsOn, matching one of its ids. */
 const creditWindow = (s, q) => (s.workouts || [])
   .filter(w => String(w.d || '') >= q.startsOn && routineIdsOf(w).some(id => q.ids.includes(id)))

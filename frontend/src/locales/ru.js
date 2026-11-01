@@ -1,5 +1,7 @@
 // Russian UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Start new workout": "Начать новую тренировку",
+  "No training arrangement": "Тренировка не запланирована",
   "Training hints": "Рекомендации по тренировке",
   "Morning": "Утро",
   "Noon": "Полдень",

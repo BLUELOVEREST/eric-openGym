@@ -1,5 +1,7 @@
 // Portuguese UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Start new workout": "Iniciar novo treino",
+  "No training arrangement": "Nenhum treino planeado",
   "Training hints": "Orientações de treino",
   "Morning": "Manhã",
   "Noon": "Meio-dia",

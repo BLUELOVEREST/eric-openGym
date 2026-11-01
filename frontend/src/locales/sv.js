@@ -1,5 +1,7 @@
 // Swedish UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Start new workout": "Starta nytt träningspass",
+  "No training arrangement": "Ingen träning planerad",
   "Training hints": "Träningsvägledning",
   "Morning": "Morgon",
   "Noon": "Mitt på dagen",

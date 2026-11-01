@@ -1,5 +1,7 @@
 // Korean UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Start new workout": "새 운동 시작",
+  "No training arrangement": "예정된 훈련 없음",
   "Training hints": "훈련 안내",
   "Morning": "아침",
   "Noon": "정오",

@@ -60,6 +60,13 @@ This guide supplements those rules for the SparkyFitness integration.
   Read `docs/integrations/opengym-backend.md` for the service lifecycle, native body
   read model, transactional capture and focused fixture tests. Pairing still requires
   explicit approval by both owners before domain delivery is authorized.
+- Pairing always authorizes all seven fixed directional resources and history.
+  Owner claim accepts only `{invitation}`; its LAN origins, not public `ORIGIN`,
+  bind peer transport. HTTP/private permission is server-derived, never an SSRF,
+  HMAC or CSRF exemption. Activation (including rotation) initializes current data
+  only. History needs an explicit confirmed snapshot; transactional pending/open
+  guards reject concurrent owner full requests; peer requests coalesce pending
+  exports (or queue full after current), without busy 409s or a schema migration.
 - Never expose keys or queue metadata in public state. Encrypted credentials are
   supplied by a future pairing service; the storage kernel is not authentication or
   encryption. All owner arguments come from a trusted authenticated service context.

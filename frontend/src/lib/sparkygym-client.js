@@ -35,8 +35,8 @@ export async function integrationControl(id, action, value = {}) {
   await refreshIntegration()
   return result
 }
-export async function claimInvitation(invitation, allow_http, allow_private_network) {
-  const result = await api(ROOT + '/claim', { method: 'POST', body: JSON.stringify({ invitation, allow_http, allow_private_network }) })
+export async function claimInvitation(invitation) {
+  const result = await api(ROOT + '/claim', { method: 'POST', body: JSON.stringify({ invitation }) })
   if (!result.connection?.connection_id) throw new Error('Invalid connection response')
   await refreshIntegration()
   return result

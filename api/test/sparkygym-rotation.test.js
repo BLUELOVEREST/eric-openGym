@@ -25,9 +25,20 @@ test('replacement approval atomically retires the same peer binding and retains 
   assert.equal(s.getBodyProfile('o').connection_id, newId)
   const replacement = s.getConnection('o', newId)
   assert.equal(replacement.replaces_connection_id, oldId)
+  assert.equal(replacement.replacement_snapshot_id, null)
   s.confirmReplacementSnapshot('o', newId, 'wrong')
   assert.ok(s.getConnection('o', oldId).sealed_keys)
-  s.confirmReplacementSnapshot('o', newId, replacement.replacement_snapshot_id)
+  while (s.pendingControls().length) for (const job of s.pendingControls()) {
+    if (job.path.endsWith('/snapshot') && JSON.parse(job.body).action === 'begin') {
+      s.confirmReplacementSnapshot('o', newId, JSON.parse(job.body).snapshot_id)
+      assert.ok(s.getConnection('o', oldId).sealed_keys)
+      assert.deepEqual(JSON.parse(job.body).prune_resources, [])
+    }
+    if (job.path.endsWith('/snapshot') && JSON.parse(job.body).action === 'request') assert.equal(JSON.parse(job.body).include_history, false)
+    s.finishControl(job.request_id, 'delivered')
+  }
+  const full = s.queueNativeSnapshot('o', newId, true)
+  s.confirmReplacementSnapshot('o', newId, full.snapshot_id)
   assert.equal(s.getConnection('o', oldId).sealed_keys, null)
 })
 for (const [scopes, revoked] of [[['workout'], false], [['body_measurement', 'workout'], false], [['body_measurement', 'workout'], true]]) {

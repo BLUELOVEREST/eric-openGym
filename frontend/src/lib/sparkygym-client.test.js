@@ -3,9 +3,15 @@ import { beforeEach, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ api: vi.fn(), events: vi.fn() }))
 vi.mock('./api.js', () => ({ api: (...args) => mocks.api(...args), apiEvents: (...args) => mocks.events(...args), remoteAuth: () => null }))
 vi.mock('./mobile.js', () => ({ MOBILE: false }))
-import { setBodyOwner, refreshBody, currentBody, bodyReadOnly, useSparkyGym, startIntegration } from './sparkygym-client.js'
+import { setBodyOwner, refreshBody, currentBody, bodyReadOnly, useSparkyGym, startIntegration, claimInvitation } from './sparkygym-client.js'
 const body = { managed: true, source: 'sparkyfitness', connection_id: 'c', revision: 2, definitions: [], measurements: [], target: null }
 beforeEach(() => { localStorage.clear(); setBodyOwner(null); mocks.api.mockReset(); mocks.events.mockReset() })
+it('claim sends only the invitation with no network switches', async () => {
+  mocks.api.mockResolvedValue({ connection: { connection_id: 'c' }, connections: [] })
+  const invitation = { version: 1 }
+  await claimInvitation(invitation, true, true)
+  expect(JSON.parse(mocks.api.mock.calls[0][1].body)).toEqual({ invitation })
+})
 
 it('coalesces a replay burst and checkpoints only after reading its snapshots', async () => {
   setBodyOwner('alice')

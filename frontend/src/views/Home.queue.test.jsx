@@ -12,6 +12,8 @@ import { startFlow } from '../sheets.jsx'
 import { todayISO, isoOf, fmtDate } from '../lib/format.js'
 import Home from './Home.jsx'
 import { setLang } from '../lib/i18n.js'
+import { useSparkyGym } from '../lib/sparkygym-client.js'
+import { refillAfter } from '../lib/rotation.js'
 
 vi.mock('react-router-dom', () => ({ useNavigate: () => () => {} }))
 vi.mock('../sheets.jsx', () => ({
@@ -39,6 +41,7 @@ let host, root
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   startFlow.mockClear()
+  useSparkyGym.setState({ owner: null, scope: '', trainingHints: null })
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
@@ -108,22 +111,22 @@ describe('Home — coach week progress row', () => {
     expect(startFlow).not.toHaveBeenCalled()
   })
 
-  it('before startsOn it says when the week starts, and the today row points at that day', () => {
+  it('a future coach start leaves today unarranged, not explicitly resting, and points at the next day', () => {
     const startsOn = daysFromToday(2)
     setS({ queue: queue({ startsOn }) })
     mount()
     expect(status()).toBe('Next week starts ' + fmtDate(startsOn, true))
     expect(chipTexts()[0]).toBe('US W1 D1Up next')
-    expect(todayTitle()).toBe('Rest day')
+    expect(todayTitle()).toBe('No training arrangement')
     expect(host.querySelector('.today-row .ss').textContent).toMatch(/^Next session: \w+, US W1 D1$/)
   })
 
-  it('a rotation-managed queue never names a weekday on its empty gap — the row above already says what is next', () => {
+  it('an orphaned rotation queue has no rest instruction or weekday on its empty gap', () => {
     const startsOn = daysFromToday(2)
     setS({ queue: queue({ startsOn, rotationId: 'r1' }) })
     mount()
     expect(status()).toBe('Next week starts ' + fmtDate(startsOn, true))
-    expect(todayTitle()).toBe('Rest day')
+    expect(todayTitle()).toBe('No training arrangement')
     expect(host.querySelector('.today-row .ss')).toBeNull()
   })
 
@@ -134,7 +137,7 @@ describe('Home — coach week progress row', () => {
     expect(host.querySelectorAll('.wday').length).toBe(0)
     expect(host.querySelector('.queue')).toBeNull()
     expect(host.textContent).toContain('No rotation yet')
-    expect(todayTitle()).toBe('Rest day')
+    expect(todayTitle()).toBe('No training arrangement')
     expect(host.querySelector('.today-row .ss')).toBeNull()
   })
 
@@ -182,6 +185,24 @@ describe('Home — coach week progress row', () => {
     expect(todayTitle()).toBe('Rest day')
     expect(status()).toBe('Next: US W1 D1')
     expect(chips()[0].className).toContain('on')
+  })
+
+  it('keeps a native rotation rest step after the previous segment completes', () => {
+    const yesterday = daysFromToday(-1)
+    const start = Date.parse(yesterday + 'T10:00:00')
+    const workout = { ...logged('d1'), d: yesterday, start, end: start + 1000 }
+    setS({
+      rotation: { id: 'r1', sequence: ['d1', 'rest', 'd2'], at: 0 },
+      queue: queue({ ids: ['d1'], rotationId: 'r1', startsOn: yesterday, since: start - 1000 }),
+      workouts: [workout],
+    })
+    const state = structuredClone(useStore.getState().S)
+    expect(refillAfter(state, workout, yesterday, start + 2000)).toBe(true)
+    expect(state.queue.startsOn).toBe(daysFromToday(1))
+    useStore.setState({ S: state })
+    mount()
+    expect(todayTitle()).toBe('Rest day')
+    expect(host.textContent).not.toContain('No training arrangement')
   })
 
   it('a malformed queue from another client shows the weekday dots, never an empty card', () => {
@@ -265,7 +286,7 @@ describe('Home — a session pinned to a day', () => {
     expect(todayTitle()).toBe('US W1 D3 · rescheduled')
   })
 
-  it('every session pinned ahead: no chip is lit, the line names the soonest with its day, today rests', () => {
+  it('every session pinned ahead leaves today unarranged; no chip is lit and the line names the soonest day', () => {
     const d1 = daysFromToday(1), d2 = daysFromToday(3), d3 = daysFromToday(2)
     setS({ dayPlan: { [d1]: 'd1', [d2]: 'd2', [d3]: 'd3' } })
     mount()
@@ -273,7 +294,7 @@ describe('Home — a session pinned to a day', () => {
     expect(chips().some(c => c.className.includes('on'))).toBe(false)
     expect(chips().every(c => !c.disabled)).toBe(true)
     expect(status()).toBe('Next: US W1 D1 · ' + fmtDate(d1, true))
-    expect(todayTitle()).toBe('Rest day')
+    expect(todayTitle()).toBe('No training arrangement')
     // Soonest by date, not first in slot order.
     act(() => setS({ dayPlan: { [daysFromToday(3)]: 'd1', [daysFromToday(1)]: 'd2', [daysFromToday(2)]: 'd3' } }))
     expect(status()).toBe('Next: US W1 D2 · ' + fmtDate(daysFromToday(1), true))

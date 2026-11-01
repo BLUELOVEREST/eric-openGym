@@ -28,7 +28,36 @@ test('activation archives local body fields and native body values preserve same
   assert.equal(state.bodyweight[0].w, 78)
   assert.equal(state.measurements[0].leftArm, undefined)
   assert.equal(state.measurements[0].sourceMetrics.left_biceps, 32)
+  assert.equal(state.measurements[0].upperArmLeft, 32)
   assert.deepEqual(stripManagedBodyFields({ ...state, targetW: 72 }), { workouts: [] })
+})
+
+test('all eighteen SF built-in circumferences use native fields, not Other', () => {
+  const fields = { neck: 'neck', shoulders: 'shoulders', chest: 'chest', waist: 'waist', hips: 'hips', abdomen: 'abdomen', left_biceps: 'upperArmLeft', right_biceps: 'upperArmRight', left_forearm: 'forearmLeft', right_forearm: 'forearmRight', left_wrist: 'wristLeft', right_wrist: 'wristRight', left_thigh: 'thighLeft', right_thigh: 'thighRight', left_calf: 'calfLeft', right_calf: 'calfRight', left_ankle: 'ankleLeft', right_ankle: 'ankleRight' }
+  const measurements = Object.keys(fields).map((metric, index) => ({ ...payload(metric, index + 20), entity_id: '2026-10-31:' + metric, date: '2026-10-31' }))
+  const definitions = measurements.map(m => ({ metric_id: m.metric_id, ...m.definition, unit: m.unit, enabled: true }))
+  const state = composeBodyState({ workouts: [] }, { managed: true, definitions, measurements, target: null })
+  assert.equal(state.measurements.length, 1)
+  for (const [index, field] of Object.values(fields).entries()) assert.equal(state.measurements[0][field], index + 20, field)
+  assert.deepEqual(state.measurements[0].other, [])
+  assert.deepEqual(state.customMeasurements, [])
+})
+
+test('circumference aliases do not reinterpret custom definitions or incompatible units', () => {
+  const custom = { ...payload('left_forearm', 7), entity_id: 'custom', definition: { builtin: false, label: 'My measure', value_type: 'length' } }
+  const mass = { ...payload('left_wrist', 2, 'kg'), entity_id: 'mass' }
+  const canonical = { ...payload('upper_arm_right', 33), entity_id: 'canonical' }
+  const state = composeBodyState({}, { managed: true, definitions: [], measurements: [custom, mass, canonical], target: null })
+  assert.equal(state.measurements[0].forearmLeft, undefined)
+  assert.equal(state.measurements[0].wristLeft, undefined)
+  assert.equal(state.measurements[0].upperArmRight, 33)
+  assert.equal(state.measurements[0].other.length, 2)
+})
+
+test('unknown built-in metric IDs cannot resolve inherited object members as native fields', () => {
+  const reading = { ...payload('constructor', 7), entity_id: 'unknown' }
+  const state = composeBodyState({}, { managed: true, definitions: [], measurements: [reading], target: null })
+  assert.equal(state.measurements[0].other[0].id, 'constructor')
 })
 test('all direct profile writes reject source-owned body fields, while reset retains projection', t => {
   const store = setup(t)

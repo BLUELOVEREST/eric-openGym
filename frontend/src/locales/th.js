@@ -1,5 +1,7 @@
 // Thai UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Start new workout": "เริ่มการออกกำลังกายใหม่",
+  "No training arrangement": "ไม่มีแผนการฝึก",
   "Training hints": "แนวทางการฝึก",
   "Morning": "เช้า",
   "Noon": "เที่ยง",

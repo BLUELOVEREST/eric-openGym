@@ -8,21 +8,27 @@ integration never matches a completed workout to a planned session.
 
 1. Sign in to the intended account in each service. The servers must be able to
    reach each other's configured origins. Use an origin such as
-   `https://gym.example.test`, without an `/api` suffix or a path prefix.
+   `http://192.168.200.118:3085`, without an `/api` suffix or a path prefix.
 2. In SparkyFitness Settings, open Developer/Integrations and the openGym section.
-   Enter the openGym origin, choose resource scopes and decide whether to include
-   existing history. For a trusted LAN fixture only, explicitly allow both private
-   networks and unencrypted HTTP if applicable.
+   Enter both backend-reachable LAN origins: SparkyFitness, for example
+   `http://192.168.200.118:3006`, and openGym, for example
+   `http://192.168.200.118:3085`. Public browser/auth origins remain independent.
+   All seven resource scopes and their producer directions are fixed. HTTP/private
+   permissions are integration policy, not switches in the pairing form.
 3. Create and copy the invitation. It expires after ten minutes and contains a
    secret: do not put it in logs, screenshots or source control.
 4. In openGym Settings / Account, open SparkyFitness / Import invitation, paste
-   the invitation JSON and explicitly confirm the required LAN/HTTP permissions.
+   the invitation JSON and import it under the intended openGym account.
 5. Return to SparkyFitness and approve the displayed peer account. Check the peer
-   origin, scopes and affected record counts before approval. Both ends should
+   origin and affected record counts before approval. Both ends should
    then show an active connection. No manually configured API key is needed.
 
-Installing an updated image does not pair accounts automatically. Pairing and
-history consent are separate from ordinary login and from food providers.
+Installing an updated image does not pair accounts automatically. Activation
+initializes current state only. To import existing history in both directions,
+use the confirmed history action on an active connection. Pending equivalent
+peer requests coalesce; owner requests are refused while snapshot work is pending.
+Repeating a completed import reconciles the same source/entity identities rather
+than duplicating records. Pairing is separate from login and food providers.
 
 ## Check The Data Flow
 

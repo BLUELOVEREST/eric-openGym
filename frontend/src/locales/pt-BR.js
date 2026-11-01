@@ -4,6 +4,8 @@
 import pt from './pt.js'
 
 export const PT_BR_OVERRIDES = {
+  "Start new workout": "Iniciar novo treino",
+  "No training arrangement": "Nenhum treino programado",
   "Allow private networks": "Permitir redes privadas",
   "Allow unencrypted HTTP": "Permitir HTTP sem criptografia",
   "Available": "Disponível",

@@ -1,6 +1,6 @@
 # Frontend Integration Guide
 
-Last updated: 2026-10-30.
+Last updated: 2026-10-31.
 
 Follow the root `AGENTS.md`, `CLAUDE.md`, and
 `docs/integrations/completion-contract.md`. Keep the existing settings UI.
@@ -11,6 +11,15 @@ Follow the root `AGENTS.md`, `CLAUDE.md`, and
   displays source-owned SF guidance on Home and date sheets. It never edits private
   notes, marks completion, associates workouts or requires a predefined routine.
   Training guidance without a local routine uses the existing freestyle start.
+  Home keeps an explicit Start new workout entry into the native workout picker
+  after completed sessions; an active session/editor must be resumed, not replaced.
+  Rest / skip opens the existing day editor and never creates a private rest note
+  automatically. A covering dated hint with no weekday slots means planned rest;
+  no covering hint means No training arrangement, not rest. Native routines and
+  explicit rest overrides retain their own meaning. Hint display never excuses a
+  day or changes reminders. Connected/paused settings emphasize the existing
+  summary and controls; importing replacement keys requires the deliberate re-pair
+  entry and the existing invitation approval flow.
 
 - `src/lib/sparkygym-client.js` owns the authenticated body cache and notification
   lifecycle. Cache keys include the server base and authenticated owner. Native
@@ -34,8 +43,11 @@ Follow the root `AGENTS.md`, `CLAUDE.md`, and
   not cookie-only EventSource. Advance durable cursors only after snapshot refresh;
   compacted cursors require explicit snapshot recovery. Reconnect/focus resumes
   reads; there is no business-data polling or suspended-phone timer guarantee.
-- SparkyFitness creates invitations. openGym only imports them with explicit HTTP
-  and private-network consent. Purge requires a revoked source and confirmation.
+- SparkyFitness creates fixed seven-resource invitations with history authorization.
+  openGym imports only `{invitation}`; LAN backend origins are independent of public
+  browser URLs. No scope/network switches or permanent authorization/capability
+  displays. Activation initializes current data only; full history requires the
+  confirmed history action. Purge requires a revoked source and confirmation.
 - Preserve intrinsic `instance_id` and `set_id` values through edits and reordering.
   New sessions receive client IDs. The server canonicalizes legacy stored history;
   do not migrate it on unrelated preference edits. Workout body-weight and target

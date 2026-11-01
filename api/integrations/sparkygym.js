@@ -39,7 +39,7 @@ const exact = (value, keys) => value !== null && typeof value === 'object' && !A
 const CAPABILITIES = Object.freeze({ version: 1, resources: ['body_definition', 'body_measurement', 'body_goal', 'exercise', 'workout', 'schedule_summary', 'personal_media'], max_event_bytes: 1_048_576, max_media_bytes: 104_857_600, media_mime_types: [...PERSONAL_MEDIA_MIMES] })
 const pairFields = ['version', 'connection_id', 'sf_owner_ref', 'og_owner_ref', 'sf_origin', 'og_origin', 'sf_nonce', 'og_nonce', 'scopes', 'include_history']
 function validatePair(value) {
-  if (!exact(value, pairFields) || value.version !== 1 || !isUuid(value.connection_id) || typeof value.include_history !== 'boolean' || !Array.isArray(value.scopes) || !value.scopes.length || value.scopes.length > 7 || new Set(value.scopes).size !== value.scopes.length || !value.scopes.every(scope => CAPABILITIES.resources.includes(scope))) fail('invalid_pair')
+  if (!exact(value, pairFields) || value.version !== 1 || !isUuid(value.connection_id) || value.include_history !== true || !Array.isArray(value.scopes) || value.scopes.length !== 7 || new Set(value.scopes).size !== 7 || !value.scopes.every(scope => CAPABILITIES.resources.includes(scope))) fail('invalid_pair')
   for (const field of ['sf_owner_ref', 'og_owner_ref']) if (typeof value[field] !== 'string' || !/^[^\x00-\x20\x7f]{1,200}$/.test(value[field])) fail('invalid_pair')
   for (const field of ['sf_nonce', 'og_nonce']) if (typeof value[field] !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(value[field])) fail('invalid_pair')
   for (const field of ['sf_origin', 'og_origin']) { try { const url = new URL(value[field]); if (!['http:', 'https:'].includes(url.protocol) || value[field].replace(/\/$/, '') !== url.origin) fail('invalid_pair') } catch { fail('invalid_pair') } }
@@ -116,7 +116,7 @@ export function createSparkyGymIntegration({ store, secret, origin, readOwner, c
       validateSnapshot(value, connection.scopes.filter(resource => resource.startsWith('body_') || resource === 'schedule_summary'))
       if (value.connection_id !== connection.id) fail('binding_mismatch', 403)
       const result = store.controlReceipt(connection.id, requestId, req.method, path, bytes, () => {
-        if (value.action === 'request') return store.queueNativeSnapshot(connection.owner_id, connection.id, value.include_history)
+        if (value.action === 'request') return store.queueNativeSnapshot(connection.owner_id, connection.id, value.include_history, true)
         if (value.action === 'begin') return store.beginIncomingSnapshot(connection.owner_id, connection.id, value)
         return store.completeIncomingSnapshot(connection.owner_id, connection.id, value.snapshot_id)
       })
@@ -133,20 +133,23 @@ export function createSparkyGymIntegration({ store, secret, origin, readOwner, c
     fail('unsupported_operation', 501)
   }
   async function claim(owner, value) {
-    if (!exact(value, ['invitation', 'allow_http', 'allow_private_network']) || typeof value.allow_http !== 'boolean' || typeof value.allow_private_network !== 'boolean') fail('invalid_claim')
+    if (!exact(value, ['invitation'])) fail('invalid_claim')
     const offer = value.invitation
     if (!exact(offer, ['version', 'connection_id', 'sf_origin', 'sf_owner_ref', 'sf_nonce', 'secret', 'expires_at', 'peer_origin', 'scopes', 'include_history']) || offer.version !== 1 || typeof offer.peer_origin !== 'string' || typeof offer.secret !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(offer.secret) || typeof offer.expires_at !== 'string' || !Number.isFinite(Date.parse(offer.expires_at)) || new Date(offer.expires_at).toISOString() !== offer.expires_at || Date.parse(offer.expires_at) <= Date.now() || Date.parse(offer.expires_at) > Date.now() + 600_000) fail('invalid_invitation')
-    if (offer.peer_origin.replace(/\/$/, '') !== origin.replace(/\/$/, '')) fail('peer_origin_mismatch')
-    const binding = { version: 1, connection_id: offer.connection_id, sf_owner_ref: offer.sf_owner_ref, og_owner_ref: owner, sf_origin: offer.sf_origin, og_origin: origin, sf_nonce: offer.sf_nonce, og_nonce: randomBytes(32).toString('base64url'), scopes: offer.scopes, include_history: offer.include_history }
+    const binding = { version: 1, connection_id: offer.connection_id, sf_owner_ref: offer.sf_owner_ref, og_owner_ref: owner, sf_origin: offer.sf_origin, og_origin: offer.peer_origin, sf_nonce: offer.sf_nonce, og_nonce: randomBytes(32).toString('base64url'), scopes: offer.scopes, include_history: offer.include_history }
     validatePair(binding)
-    await validateDestination(offer.sf_origin.replace(/\/$/, ''), { allow_insecure_http: value.allow_http, allow_private_network: value.allow_private_network })
+    const network = { allow_insecure_http: true, allow_private_network: true }
+    for (const destination of [offer.sf_origin, offer.peer_origin]) {
+      try { await validateDestination(destination.replace(/\/$/, ''), network) }
+      catch { fail('invalid_destination') }
+    }
     if (!store.getProfile(owner)) store.commitProfile(owner, 0, {})
     const previous = store.getConnection(owner, offer.connection_id)
     if (previous) fail('claim_exists', 409)
     const keys = derivePairKeys(offer.secret, binding)
-    store.createConnection(owner, { id: offer.connection_id, peer_origin: offer.sf_origin.replace(/\/$/, ''), peer_user_id: offer.sf_owner_ref, scopes: offer.scopes, allow_insecure_http: value.allow_http }, {
+    store.createConnection(owner, { id: offer.connection_id, peer_origin: offer.sf_origin.replace(/\/$/, ''), peer_user_id: offer.sf_owner_ref, scopes: offer.scopes, allow_insecure_http: true }, {
       binding, sealed_keys: sealCredentials(secret, offer.connection_id, { version: 1, sf_nonce: binding.sf_nonce, og_nonce: binding.og_nonce, incoming_key: keys.incoming.toString('base64url'), outgoing_key: keys.outgoing.toString('base64url'), invitation_secret: offer.secret, expires_at: offer.expires_at }),
-      allow_private_network: value.allow_private_network, body: jsonBytes(binding)
+      allow_private_network: true, body: jsonBytes(binding)
     })
     afterCommitWake()
     return { connection: publicConnection(getConnection(owner, offer.connection_id)) }
@@ -228,7 +231,7 @@ export function createSparkyGymIntegration({ store, secret, origin, readOwner, c
       notify(owner.id); afterCommitWake(); reply(res, 200, { connection: publicConnection(getConnection(owner.id, id)) })
     } catch (error) {
       const conflicts = ['source_rewind', 'event_conflict', 'control_conflict', 'snapshot_conflict']
-      const status = error.status ?? ([...conflicts, 'profile_conflict', 'body_source_exists', 'snapshot_incomplete', 'snapshot_export_blocked'].includes(error.message) ? 409 : error instanceof TypeError ? 400 : 503)
+      const status = error.status ?? ([...conflicts, 'profile_conflict', 'body_source_exists', 'snapshot_incomplete', 'snapshot_export_blocked', 'snapshot_in_progress'].includes(error.message) ? 409 : error instanceof TypeError ? 400 : 503)
       const value = { error: status === 503 ? 'integration_unavailable' : error.message }
       if (req.sparkyGymContext) {
         const { connection, requestId, keys } = req.sparkyGymContext

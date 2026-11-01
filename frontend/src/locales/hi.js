@@ -1,5 +1,7 @@
 // Hindi UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Start new workout": "नया वर्कआउट शुरू करें",
+  "No training arrangement": "कोई प्रशिक्षण निर्धारित नहीं",
   "Training hints": "प्रशिक्षण संकेत",
   "Morning": "सुबह",
   "Noon": "दोपहर",

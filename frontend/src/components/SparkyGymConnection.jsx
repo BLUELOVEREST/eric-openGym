@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useSparkyGym, refreshIntegration, integrationControl, claimInvitation } from '../lib/sparkygym-client.js'
 import { t } from '../lib/i18n.js'
-import { Section, Row, Button, Switch } from './ui.jsx'
+import { Section, Row, Button } from './ui.jsx'
 import { confirmSheet } from '../sheets.jsx'
 
 const resourceLabel = resource => ({ body_definition: t('Fields'), body_measurement: t('Body measurements'), body_goal: t('Target weight'), exercise: t('Exercises'), workout: t('Workouts'), schedule_summary: t('Schedule'), personal_media: t('Photos & videos') })[resource] || resource
@@ -16,8 +16,6 @@ export default function SparkyGymConnection() {
   const [failed, setFailed] = useState(false)
   const [showImport, setShowImport] = useState(false)
   const [invitation, setInvitation] = useState('')
-  const [http, setHttp] = useState(false)
-  const [privateNetwork, setPrivateNetwork] = useState(false)
   const run = async operation => {
     if (busy) return
     setBusy(true); setFailed(false)
@@ -29,8 +27,8 @@ export default function SparkyGymConnection() {
     const offer = JSON.parse(invitation)
     const keys = ['version', 'connection_id', 'sf_owner_ref', 'sf_origin', 'sf_nonce', 'scopes', 'include_history', 'secret', 'expires_at', 'peer_origin']
     if (!offer || typeof offer !== 'object' || Array.isArray(offer) || Object.keys(offer).length !== keys.length || !keys.every(key => Object.hasOwn(offer, key)) || offer.version !== 1) throw new Error('invalid_invitation')
-    await claimInvitation(offer, http, privateNetwork)
-    setInvitation(''); setShowImport(false); setHttp(false); setPrivateNetwork(false)
+    await claimInvitation(offer)
+    setInvitation(''); setShowImport(false)
   })
   const control = (connection, action, payload = {}) => run(() => integrationControl(connection.connection_id, action, payload))
   const confirm = (connection, action) => confirmSheet({
@@ -45,23 +43,18 @@ export default function SparkyGymConnection() {
     <Section title="SparkyFitness">
       <Row icon="sync" title={status === 'connected' ? t('Connected') : t('Sync pending')} accessory="chevron" onClick={() => run(refreshIntegration)} />
       {(failed || error) && <Row icon="warning" title={t('Sync failed')} subtitle={t('Try again')} />}
-      <Row icon="plus" title={t('Import invitation')} subtitle={t('New invitation must be created in SparkyFitness.')} accessory="chevron" onClick={() => setShowImport(value => !value)} />
+      {!connections.some(connection => ['active', 'paused'].includes(connection.status)) && <Row icon="plus" title={t('Import invitation')} subtitle={t('New invitation must be created in SparkyFitness.')} accessory="chevron" onClick={() => setShowImport(value => !value)} />}
     </Section>
     {showImport && <Section title={t('Import invitation')}>
       <div style={{ padding: 12 }}>
         <label className="small dim" htmlFor="sparkygym-invitation">{t('Invitation JSON')}</label>
         <textarea id="sparkygym-invitation" className="field" value={invitation} maxLength={12000} autoComplete="off" spellCheck={false} onChange={event => setInvitation(event.target.value)} style={{ width: '100%', minHeight: 120, resize: 'vertical' }} />
       </div>
-      <Row title={t('Allow unencrypted HTTP')}><Switch checked={http} onChange={setHttp} disabled={busy} /></Row>
-      <Row title={t('Allow private networks')}><Switch checked={privateNetwork} onChange={setPrivateNetwork} disabled={busy} /></Row>
       <div style={{ padding: 12 }}><Button icon="link" disabled={busy || !invitation.trim()} onClick={claim}>{t('Import invitation')}</Button></div>
     </Section>}
     {connections.map(connection => <Section key={connection.connection_id} title={stateLabel(connection.status)}>
       <Row icon="server" title={connection.peer_origin} subtitle={connection.peer_owner_ref || t('Pending approval')} />
-      <Row title={t('Resource scopes')} subtitle={(connection.scopes || []).map(resourceLabel).join(', ')} />
-      <Row title={t('Import history')} value={connection.include_history ? t('On') : t('Off')} />
       <Row title={t('Record counts')} subtitle={Object.entries(connection.affected_record_counts || {}).map(([resource, amount]) => resourceLabel(resource) + ': ' + amount).join(', ')} />
-      {connection.capabilities && <Row title={t('Available')} subtitle={connection.capabilities.resources.map(resourceLabel).join(', ')} />}
       <Row title={t('Pending personal media')} value={connection.delivery?.pending_media ?? 0} />
       {!!connection.delivery?.pending && <Row title={t('Sync pending')} value={connection.delivery.pending} />}
       {!!connection.delivery?.failed && <Row title={t('Sync failed')} value={connection.delivery.failed} />}

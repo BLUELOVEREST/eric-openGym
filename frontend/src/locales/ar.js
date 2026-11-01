@@ -1,5 +1,7 @@
 // Arabic UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Start new workout": "بدء تمرين جديد",
+  "No training arrangement": "لا يوجد ترتيب للتدريب",
   "Training hints": "إرشادات التدريب",
   "Morning": "الصباح",
   "Noon": "الظهر",

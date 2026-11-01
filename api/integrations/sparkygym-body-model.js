@@ -1,8 +1,21 @@
 // Browser-safe domain composition. Source-only metrics retain their own names.
 export const MANAGED_BODY_FIELDS = Object.freeze(['bodyweight', 'measurements', 'customMeasurements', 'measurementEnabled', 'targetW'])
 const nativeFields = Object.freeze({ neck: 'neck', shoulders: 'shoulders', chest: 'chest', waist: 'waist', hips: 'hips', abdomen: 'abdomen', upper_arm_left: 'upperArmLeft', upper_arm_right: 'upperArmRight', forearm_left: 'forearmLeft', forearm_right: 'forearmRight', wrist_left: 'wristLeft', wrist_right: 'wristRight', thigh_left: 'thighLeft', thigh_right: 'thighRight', calf_left: 'calfLeft', calf_right: 'calfRight', ankle_left: 'ankleLeft', ankle_right: 'ankleRight', body_fat_percentage: 'bodyFat' })
+// SF retains its persisted metric IDs; aliases affect presentation, never source identity.
+const sfCircumferenceAliases = Object.freeze({
+  left_biceps: 'upperArmLeft', right_biceps: 'upperArmRight',
+  left_forearm: 'forearmLeft', right_forearm: 'forearmRight',
+  left_wrist: 'wristLeft', right_wrist: 'wristRight',
+  left_thigh: 'thighLeft', right_thigh: 'thighRight',
+  left_calf: 'calfLeft', right_calf: 'calfRight',
+  left_ankle: 'ankleLeft', right_ankle: 'ankleRight'
+})
 const displayUnit = unit => unit === 'percent' ? '%' : unit
-const nativeField = reading => reading.definition?.builtin && ((reading.unit === 'cm' && reading.definition.value_type === 'length') || (reading.unit === 'percent' && reading.definition.value_type === 'percent')) ? nativeFields[reading.metric_id] : null
+const nativeField = reading => {
+  if (!reading.definition?.builtin || !((reading.unit === 'cm' && reading.definition.value_type === 'length') || (reading.unit === 'percent' && reading.definition.value_type === 'percent'))) return null
+  if (Object.hasOwn(nativeFields, reading.metric_id)) return nativeFields[reading.metric_id]
+  return reading.unit === 'cm' && Object.hasOwn(sfCircumferenceAliases, reading.metric_id) ? sfCircumferenceAliases[reading.metric_id] : null
+}
 export function stripManagedBodyFields(state) {
   return Object.fromEntries(Object.entries(state).filter(([key]) => !MANAGED_BODY_FIELDS.includes(key)))
 }

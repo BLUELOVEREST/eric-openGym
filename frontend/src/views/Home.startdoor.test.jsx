@@ -8,7 +8,7 @@ import React, { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createRoot } from 'react-dom/client'
 import { useStore } from '../store/useStore.js'
-import { startFlow } from '../sheets.jsx'
+import { startFlow, dayOverrideSheet } from '../sheets.jsx'
 import Home from './Home.jsx'
 import { useSparkyGym } from '../lib/sparkygym-client.js'
 import { todayISO } from '../lib/format.js'
@@ -43,9 +43,42 @@ const setS = (over = {}) => useStore.setState(s => ({
   user: null,
 }))
 const mount = () => act(() => root.render(<Home />))
-const door = () => [...host.querySelectorAll('button')].find(b => b.textContent.includes('Choose a different workout'))
+const door = () => [...host.querySelectorAll('button')].find(b => b.textContent.includes('Start new workout'))
 
 describe('Home — the way to the Start screen when a plan already owns today', () => {
+  it.each([{ workouts: [] }, { workouts: [{ id: 'one', d: todayISO(), name: 'Morning' }] }])('shows the empty arrangement only once with completed workouts %j', ({ workouts }) => {
+    setS({ week: {}, workouts }); mount()
+    expect(host.textContent.match(/No training arrangement/g)).toHaveLength(1)
+  })
+  it.each([{ week: {}, dayPlan: { [todayISO()]: 'rest' } }, {}])('does not label native rest or routines as unarranged (%j)', over => {
+    setS(over); mount()
+    expect(host.textContent).not.toContain('No training arrangement')
+  })
+  it('opens the existing explicit rest action without automatically writing a rest note', () => {
+    setS({ week: {} }); mount()
+    const before = useStore.getState().S
+    act(() => [...host.querySelectorAll('button')].find(b => b.textContent === 'Rest / skip this day').click())
+    expect(dayOverrideSheet).toHaveBeenCalledWith(todayISO())
+    expect(useStore.getState().S).toBe(before)
+  })
+  it('keeps a new independent workout discoverable after two completed sessions', () => {
+    setS({ week: {}, workouts: [{ id: 'one', d: todayISO(), name: 'Morning' }, { id: 'two', d: todayISO(), name: 'Evening' }] }); mount()
+    expect(door()).toBeTruthy()
+    act(() => door().click())
+    expect(nav).toHaveBeenCalledWith('/workout')
+    expect(useStore.getState().S.workouts).toHaveLength(2)
+  })
+  it('distinguishes planned rest from no covering plan after deletion without changing native state', () => {
+    setS({ week: {} })
+    const before = useStore.getState().S
+    useSparkyGym.setState({ trainingHints: { hints: [{ entity_id: 'sf', name: 'Rest week', timezone: 'UTC', effective_from: todayISO(), effective_until: null, days: [] }] } })
+    mount()
+    expect(host.textContent).toContain('Rest day')
+    act(() => useSparkyGym.setState({ trainingHints: { hints: [] } }))
+    expect(host.querySelector('.today-row').textContent).toContain('No training arrangement')
+    expect(host.textContent.match(/No training arrangement/g)).toHaveLength(1)
+    expect(useStore.getState().S).toBe(before)
+  })
   it('starts freestyle without a routine when SF has training guidance, not a rest claim', () => {
     setS({ week: {}, routines: [] })
     useSparkyGym.setState({ trainingHints: { revision: 1, date: null, hints: [{ entity_id: 'sf', name: 'Weekly intent', timezone: 'UTC', week_start: 1, effective_from: todayISO(), effective_until: null, days: [{ weekday: new Date().getDay(), slots: [{ time_slot: 'evening', activity: 'Football', is_main: true }] }] }] } })

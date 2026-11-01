@@ -1,5 +1,7 @@
 // Hungarian UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Start new workout": "Új edzés indítása",
+  "No training arrangement": "Nincs tervezett edzés",
   "Training hints": "Edzési útmutatás",
   "Morning": "Reggel",
   "Noon": "Dél",

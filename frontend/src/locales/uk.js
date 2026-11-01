@@ -1,5 +1,7 @@
 // Ukrainian UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Start new workout": "Почати нове тренування",
+  "No training arrangement": "Тренування не заплановано",
   "Training hints": "Рекомендації з тренування",
   "Morning": "Ранок",
   "Noon": "Полудень",

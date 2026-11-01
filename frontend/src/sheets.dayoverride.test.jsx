@@ -11,6 +11,7 @@ import { useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
 import { dayOverrideSheet } from './sheets.jsx'
 import { todayISO, isoOf, fmtDate, exCount } from './lib/format.js'
+import { useSparkyGym } from './lib/sparkygym-client.js'
 
 const routines = [
   { id: 'd1', name: 'US W1 D1', emoji: null, ex: [{ id: '0025' }] },
@@ -45,6 +46,7 @@ const setS = (over = {}) => useStore.setState(s => ({ S: { ...s.S, routines, wee
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   useUI.setState({ sheets: [], toastMsg: '' })
+  useSparkyGym.setState({ owner: null, scope: '', trainingHints: null })
   document.body.innerHTML = ''
 })
 afterEach(() => { act(() => { mounted.splice(0).forEach(r => r.unmount()) }) })
@@ -62,19 +64,22 @@ describe('Day sheet header in a coach week', () => {
   it('a rest override for today still shows the plan it replaced, marked as changed', () => {
     setS({ dayPlan: { [todayISO()]: 'rest' } })
     dayOverrideSheet(todayISO())
-    const h = header(renderTop())
+    const host = renderTop()
+    const h = header(host)
     expect(h).toMatch(/^Weekly plan: US W1 D1/)
     expect(h).toContain('changed for this day')
+    expect(rowOf(host, 'Rest / skip this day').querySelector('.accent')).not.toBeNull()
+    expect(host.textContent).not.toContain('No training arrangement')
   })
 
-  it('another day has no queue session: the weekday alone, or Rest', () => {
+  it('another day has no queue session: the weekday routine, or no arrangement without an explicit rest', () => {
     const tomorrow = daysFromToday(1)
     setS({ week: { [new Date(tomorrow + 'T12:00:00').getDay()]: ['own'] } })
     dayOverrideSheet(tomorrow)
     expect(header(renderTop())).toMatch(/^Weekly plan: Core/)
     setS()
     dayOverrideSheet(tomorrow)
-    expect(header(renderTop())).toMatch(/^Weekly plan: Rest/)
+    expect(header(renderTop())).toMatch(/^Weekly plan: No training arrangement/)
   })
 })
 

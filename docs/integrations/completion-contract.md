@@ -4,6 +4,21 @@
 dated daily hints. openGym independently records concrete daily workouts and sends
 actual results back. There is no plan-session association or meal-source picker.
 
+**2026-10-30 LAN pairing correction:** fixed seven scopes/directions and full
+history authorization, with no scope/network switches. SF invitation creation
+accepts `{self_origin,peer_origin}` LAN backend destinations. The invitation wire
+fields do not change; `scopes` contains all seven and `include_history:true` means
+authorization only. openGym owner claim accepts exactly `{invitation}`, derives
+HTTP/private permission server-side, validates both destinations and binds
+`og_origin` to `offer.peer_origin`, independent of public/browser `ORIGIN`.
+Activation and re-pairing initialize CURRENT data only (`includeHistory=false`).
+Full history requires an explicit confirmed action. Existing-table transactional
+pending/open snapshot guards reject duplicate owner full requests with
+`409 snapshot_in_progress`. Incoming peer requests coalesce pending equivalent/full
+exports or queue the first full export behind current initialization; they never
+return a busy 409 merely because an export is pending. Exact request-ID receipt
+replay remains intact. HMAC, CSRF and metadata/SSRF restrictions remain independent.
+
 Date: 2026-10-29. Implements the already approved architecture and ownership decisions.
 No production deployment is authorized by implementation alone.
 
@@ -18,7 +33,7 @@ or a body-supplied user ID. Peer operations use only the paired identity binding
 
 - GET `/api/integrations/sparkygym`: public connection/status/capability records.
 - POST `/api/integrations/sparkygym/invitations`: SparkyFitness creates a ten-minute
-  invitation for an explicitly configured peer origin and selected resource scopes.
+  invitation for explicit self/peer backend origins and all seven fixed scopes.
 - POST `/api/integrations/sparkygym/claim`: openGym's authenticated owner imports it.
 - POST `/api/integrations/sparkygym/:id/approve`: SparkyFitness's original owner
   approves the claimed peer identity. No automatic activation on claim alone.
@@ -92,7 +107,8 @@ requests historical import must obtain that consent before retiring the old bind
 
 Outgoing requests pin validated DNS results, reject redirects, credentials, non-HTTP
 schemes, unspecified/multicast/link-local/metadata destinations. HTTP and private
-networks each require explicit per-connection opt-in, never a global exemption.
+networks are permitted by server-derived pairing policy, never a global exemption
+from destination validation, signing or owner CSRF checks.
 Use isolated private-IP fixture servers for real-network acceptance.
 
 ## Event Resources

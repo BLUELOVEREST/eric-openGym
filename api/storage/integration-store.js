@@ -448,12 +448,28 @@ export function openIntegrationStore(filename) {
       if (!Number.isSafeInteger(event.source_cursor) || event.source_cursor < 1) fail('source_cursor_required')
       return service.receive(owner, body, (_tx, event) => event.resource === 'schedule_summary' ? projectHint(owner, event) : projectBody(owner, event))
     },
-    queueNativeSnapshot(owner, id, includeHistory) {
+    queueNativeSnapshot(owner, id, includeHistory, coalesce = false) {
       return snapshotTransaction(() => {
         const connection = connectionFor(owner, id)
         const scopes = JSON.parse(connection.scopes)
-        includeHistory ||= !!connection.replaces_connection_id
         if (includeHistory && (!connection.binding || JSON.parse(connection.binding).include_history !== true)) fail('history_not_authorized')
+        const pruneResources = scopes.filter(resource => RESOURCE_PRODUCERS[resource] === 'opengym' && (includeHistory || resource === 'exercise'))
+        if (coalesce) {
+          // A new authenticated peer request may reuse queued work, even after begin
+          // was acknowledged. Do not return busy 409: senders treat it as terminal.
+          const pending = db.prepare("SELECT body FROM integration_controls WHERE owner_id=? AND connection_id=? AND path='/api/integrations/v1/snapshot' AND status='pending' ORDER BY delivery_order").all(owner, id)
+          for (const row of pending) {
+            const packet = JSON.parse(Buffer.from(row.body).toString())
+            if (!packet.snapshot_id) continue
+            const beginRow = packet.action === 'begin' ? row : db.prepare("SELECT body FROM integration_controls WHERE owner_id=? AND connection_id=? AND path='/api/integrations/v1/snapshot' AND json_extract(CAST(body AS TEXT),'$.action')='begin' AND json_extract(CAST(body AS TEXT),'$.snapshot_id')=?").get(owner, id, packet.snapshot_id)
+            if (!beginRow) continue
+            const begin = JSON.parse(Buffer.from(beginRow.body).toString())
+            if (pruneResources.every(resource => begin.prune_resources.includes(resource))) return { version: 1, snapshot_id: packet.snapshot_id, status: 'snapshot_queued' }
+          }
+        }
+        // Inspect all durable pending jobs, not just the currently deliverable head.
+        if (includeHistory && !coalesce && (db.prepare("SELECT 1 FROM integration_controls WHERE owner_id=? AND connection_id=? AND path='/api/integrations/v1/snapshot' AND status='pending' LIMIT 1").get(owner, id) ||
+          db.prepare("SELECT 1 FROM incoming_snapshots WHERE owner_id=? AND connection_id=? AND status='open' LIMIT 1").get(owner, id))) fail('snapshot_in_progress')
         const original = getProfile(owner)?.state ?? {}
         const failures = []
         const state = normalizeTrainingIdentities(JSON.parse(profileJson(original)), {}, failures)
@@ -464,11 +480,11 @@ export function openIntegrationStore(filename) {
         const snapshotId = randomUUID(), start = Number(db.prepare("SELECT value FROM storage_metadata WHERE key='outgoing_source_cursor'").get().value) + 1
         // Empty snapshots still reserve a source boundary, so future snapshots cannot rewind it.
         if (!entities.length) db.prepare("UPDATE storage_metadata SET value=? WHERE key='outgoing_source_cursor'").run(String(start))
-        const begin = { version: 1, action: 'begin', connection_id: id, snapshot_id: snapshotId, start_cursor: start, watermark: start + Math.max(1, entities.length) - 1, expected_count: entities.length, membership_sha256: membershipHash(entities), prune_resources: scopes.filter(resource => RESOURCE_PRODUCERS[resource] === 'opengym' && (includeHistory || resource === 'exercise')) }
+        const begin = { version: 1, action: 'begin', connection_id: id, snapshot_id: snapshotId, start_cursor: start, watermark: start + Math.max(1, entities.length) - 1, expected_count: entities.length, membership_sha256: membershipHash(entities), prune_resources: pruneResources }
         insertControl(owner, id, 'POST', '/api/integrations/v1/snapshot', Buffer.from(encode(begin)))
         for (const entity of entities) enqueue(owner, { ...entity, connection_id: id, operation: 'upsert' })
         insertControl(owner, id, 'POST', '/api/integrations/v1/snapshot', Buffer.from(encode({ version: 1, action: 'complete', connection_id: id, snapshot_id: snapshotId })))
-        if (connection.replaces_connection_id) db.prepare('UPDATE connections SET replacement_snapshot_id=? WHERE owner_id=? AND id=?').run(snapshotId, owner, id)
+        if (includeHistory && connection.replaces_connection_id) db.prepare('UPDATE connections SET replacement_snapshot_id=? WHERE owner_id=? AND id=?').run(snapshotId, owner, id)
         return { version: 1, snapshot_id: snapshotId, status: 'snapshot_queued' }
       })
     },
@@ -488,6 +504,7 @@ export function openIntegrationStore(filename) {
         if (input.connection_id !== id) fail('binding_mismatch')
         const source = db.prepare('SELECT source_cursor FROM incoming_sources WHERE owner_id=? AND connection_id=?').get(owner, id)
         const previous = db.prepare('SELECT * FROM incoming_snapshots WHERE snapshot_id=?').get(input.snapshot_id)
+        if (!previous && db.prepare("SELECT 1 FROM incoming_snapshots WHERE owner_id=? AND connection_id=? AND status='open' LIMIT 1").get(owner, id)) fail('snapshot_in_progress')
         if (!source || !previous && input.start_cursor <= source.source_cursor) fail('source_rewind')
         if (previous) {
           if (previous.owner_id !== owner || previous.connection_id !== id || previous.start_cursor !== input.start_cursor || previous.watermark !== input.watermark || previous.expected_count !== input.expected_count || previous.membership_sha256 !== input.membership_sha256 || previous.prune_resources !== encode(input.prune_resources)) fail('snapshot_conflict')
@@ -624,7 +641,6 @@ export function openIntegrationStore(filename) {
         if (!result.changes) fail('connection_unavailable')
         db.prepare("UPDATE integration_controls SET status='delivered',last_error=NULL,delivered_at=?,updated_at=? WHERE connection_id=? AND path='/api/integrations/v1/pair/claim' AND status IN ('pending','terminal')").run(new Date().toISOString(), new Date().toISOString(), id)
         const connection = db.prepare('SELECT * FROM connections WHERE owner_id=? AND id=?').get(owner, id)
-        let replacing = false
         const incomingScopes = JSON.parse(connection.scopes).filter(resource => RESOURCE_PRODUCERS[resource] === 'sparkyfitness')
         if (incomingScopes.length) {
           const sourceId = connection.peer_origin + '\n' + connection.peer_user_id
@@ -635,7 +651,6 @@ export function openIntegrationStore(filename) {
             db.prepare("UPDATE connections SET status='revoked' WHERE owner_id=? AND id=?").run(owner, previous.connection_id)
             db.prepare('UPDATE connections SET replaces_connection_id=? WHERE owner_id=? AND id=?').run(previous.connection_id, owner, id)
             db.prepare('UPDATE incoming_sources SET connection_id=? WHERE owner_id=? AND source_id=?').run(id, owner, sourceId)
-            replacing = true
           } else db.prepare('INSERT INTO incoming_sources(owner_id,connection_id,source_id) VALUES(?,?,?) ON CONFLICT(owner_id,source_id) DO UPDATE SET connection_id=excluded.connection_id').run(owner, id, sourceId)
         }
         const priorBinding = db.prepare("SELECT id FROM connections WHERE owner_id=? AND peer_origin=? AND peer_user_id=? AND status='active' AND id!=? ORDER BY rowid DESC LIMIT 1").get(owner, connection.peer_origin, connection.peer_user_id, id)
@@ -643,7 +658,6 @@ export function openIntegrationStore(filename) {
           if (JSON.parse(connection.binding).include_history !== true) fail('rotation_requires_history_approval')
           db.prepare("UPDATE connections SET status='revoked' WHERE owner_id=? AND id=?").run(owner, priorBinding.id)
           db.prepare('UPDATE connections SET replaces_connection_id=? WHERE owner_id=? AND id=?').run(priorBinding.id, owner, id)
-          replacing = true
         }
         if (JSON.parse(connection.scopes).some(resource => resource.startsWith('body_'))) {
           const sourceId = connection.peer_origin + '\n' + connection.peer_user_id
@@ -656,7 +670,6 @@ export function openIntegrationStore(filename) {
             db.prepare("UPDATE connections SET status='revoked' WHERE owner_id=? AND id=?").run(owner, existing.connection_id)
             db.prepare('UPDATE connections SET replaces_connection_id=? WHERE owner_id=? AND id=?').run(existing.connection_id, owner, id)
             db.prepare('UPDATE body_sources SET connection_id=? WHERE owner_id=?').run(id, owner)
-            replacing = true
           } else {
             const current = getProfile(owner)
             const archived = Object.fromEntries(MANAGED_BODY_FIELDS.filter(key => Object.hasOwn(current.state, key)).map(key => [key, current.state[key]]))
@@ -667,10 +680,9 @@ export function openIntegrationStore(filename) {
         }
         if (connection.binding) {
           insertControl(owner, id, 'GET', '/api/integrations/v1/capabilities', Buffer.alloc(0))
-          const includeHistory = replacing || JSON.parse(connection.binding).include_history === true
+          const includeHistory = false
           try {
-            const snapshot = service.queueNativeSnapshot(owner, id, includeHistory)
-            if (replacing) db.prepare('UPDATE connections SET replacement_snapshot_id=? WHERE owner_id=? AND id=?').run(snapshot.snapshot_id, owner, id)
+            service.queueNativeSnapshot(owner, id, includeHistory)
           } catch (error) { if (error.message !== 'snapshot_export_blocked') throw error }
           insertControl(owner, id, 'POST', '/api/integrations/v1/snapshot', Buffer.from(encode({ version: 1, action: 'request', connection_id: id, include_history: includeHistory })))
           noteDelivery(owner, id)
@@ -713,7 +725,7 @@ export function openIntegrationStore(filename) {
     confirmReplacementSnapshot(owner, id, snapshotId) {
       transaction(() => {
         const connection = service.getConnection(owner, id)
-        if (!connection || connection.replacement_snapshot_id !== snapshotId || !connection.replaces_connection_id) return
+        if (!connection || !snapshotId || connection.replacement_snapshot_id !== snapshotId || !connection.replaces_connection_id) return
         db.prepare("DELETE FROM integration_media_transfers WHERE owner_id=? AND connection_id=? AND status IN ('pending','terminal')").run(owner, connection.replaces_connection_id)
         db.prepare("UPDATE outbox SET terminal=1,last_error='superseded_snapshot' WHERE owner_id=? AND connection_id=? AND status='pending'").run(owner, connection.replaces_connection_id)
         db.prepare("UPDATE connections SET sealed_keys=NULL WHERE owner_id=? AND id=? AND status='revoked' AND revocation_receipt=0").run(owner, connection.replaces_connection_id)

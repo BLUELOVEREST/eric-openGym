@@ -245,7 +245,7 @@ paths:
     post:
       tags: [data]
       summary: Claim a ten-minute SparkyFitness invitation
-      description: The body is exactly invitation, allow_http and allow_private_network. Both network permissions require independent explicit owner opt-in. The configured server ORIGIN supplies og_origin. Claim remains pending until the original SF owner approves. Returns connection, never credentials.
+      description: The body is exactly invitation. Invitations authorize all seven fixed resource scopes with include_history true; that flag authorizes later history sync, not initial history transfer. Both invitation origins are safely validated LAN backend destinations, independent of browser/public ORIGIN. The server derives HTTP/private-network transport permission and binds og_origin to invitation.peer_origin. Claim remains pending until the original SF owner approves. Activation initializes current data only. Returns connection, never credentials.
       requestBody:
         required: true
         content:
@@ -253,11 +253,9 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [invitation, allow_http, allow_private_network]
+              required: [invitation]
               properties:
                 invitation: {type: object}
-                allow_http: {type: boolean}
-                allow_private_network: {type: boolean}
       responses:
         '200': {description: Public pending connection}
         '400': {description: Invalid or expired invitation}

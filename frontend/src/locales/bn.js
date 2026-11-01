@@ -1,5 +1,7 @@
 // Bengali UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Start new workout": "নতুন ওয়ার্কআউট শুরু করুন",
+  "No training arrangement": "কোনো প্রশিক্ষণের ব্যবস্থা নেই",
   "Training hints": "প্রশিক্ষণের নির্দেশনা",
   "Morning": "সকাল",
   "Noon": "দুপুর",

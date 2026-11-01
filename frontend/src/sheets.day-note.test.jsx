@@ -62,6 +62,29 @@ afterEach(() => {
 })
 
 describe('the day sheet offers a note', () => {
+  it.each([{ dayPlan: { '2026-09-21': 'rest' } }, { dayPlan: { '2026-09-22': 'A' } }])('retains explicit native rest and routine overrides (%j)', extra => {
+    install(extra)
+    const date = Object.keys(extra.dayPlan)[0]
+    dayOverrideSheet(date)
+    const host = mountTopSheet()
+    expect(host.textContent).not.toContain('No training arrangement')
+    expect(host.textContent).toContain('Weekly plan: Push')
+    if (date === '2026-09-21') {
+      expect(host.textContent).toContain('changed for this day')
+      const rest = [...host.querySelectorAll('.item')].find(row => row.textContent === 'Rest / skip this day')
+      expect(rest.querySelector('.accent')).not.toBeNull()
+    }
+  })
+  it('shows a native rotation rest step on a date with no weekday routine', () => {
+    install({
+      week: {}, rotation: { id: 'r', sequence: ['A', 'rest'], at: 0 },
+      queue: { ids: ['A'], rotationId: 'r', since: Date.now(), startsOn: '2026-09-18' },
+    })
+    dayOverrideSheet('2026-09-17')
+    const host = mountTopSheet()
+    expect(host.textContent).toContain('Weekly plan: Rest')
+    expect(host.textContent).not.toContain('No training arrangement')
+  })
   it.each([{ days: [] }, { days: [{ weekday: 1, slots: [] }] }])('shows source rest for omitted or explicit empty weekdays without excusing the day (%j)', ({ days }) => {
     useSparkyGym.setState({ trainingHints: { revision: 1, date: null, hints: [{ entity_id: 'sf', name: 'Next week', timezone: 'UTC', week_start: 1, effective_from: '2026-09-21', effective_until: null, days }] } })
     const before = clone(S())
@@ -81,10 +104,26 @@ describe('the day sheet offers a note', () => {
     expect(host.textContent).not.toContain('Add a note for this day')
     expect(S()).toEqual(before)
   })
-  it('keeps the original weekly rest explanation when no SF hint applies', () => {
+  it('shows no arrangement instead of rest when no SF hint or native routine applies', () => {
     install({ routines: [], week: {} })
     dayOverrideSheet('2026-09-21')
-    expect(mountTopSheet().textContent).toContain('Weekly plan: Rest')
+    const host = mountTopSheet()
+    expect(host.textContent).toContain('Weekly plan: No training arrangement')
+    expect(host.textContent.match(/No training arrangement/g)).toHaveLength(1)
+  })
+  it('switches dates and handles hint deletion without changing workouts, routines, notes or reminders', () => {
+    install({ dayNotes: withDayNote({}, '2026-09-14', { tag: 'sick', text: 'Private' }, 5) })
+    const before = clone(S())
+    useSparkyGym.setState({ trainingHints: { hints: [{ entity_id: 'sf', name: 'Dated rest', timezone: 'UTC', effective_from: '2026-09-21', effective_until: '2026-09-21', days: [] }] } })
+    dayOverrideSheet('2026-09-21')
+    const rest = mountTopSheet()
+    expect(rest.textContent).toContain('Rest day')
+    dayOverrideSheet('2026-09-22')
+    expect(mountTopSheet().textContent).toContain('No training arrangement')
+    act(() => useSparkyGym.setState({ trainingHints: { hints: [] } }))
+    expect(rest.textContent).not.toContain('Rest day')
+    expect(rest.textContent).toContain('Push')
+    expect(S()).toEqual(before)
   })
   const offered = iso => {
     useUI.setState({ sheets: [] })

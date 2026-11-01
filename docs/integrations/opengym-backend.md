@@ -36,11 +36,39 @@ peer-closure proof and satisfies a pending local revoke rather than retrying for
 
 ## Pairing and Body Ownership
 
-The SF owner creates an invitation and the openGym owner claims it with independent
-`allow_http` and `allow_private_network` choices. DNS validation checks every result;
-the connection pins a validated address and refuses redirects and prohibited ranges.
+The SF owner creates an invitation from `{self_origin,peer_origin}` backend URLs.
+The openGym owner claims it with exactly `{invitation}`. All seven scopes and
+`include_history:true` are mandatory authorization, not scope/history preferences.
+Partial and legacy claims are rejected. `og_origin` binds to `invitation.peer_origin`,
+not the configured public/browser `ORIGIN`. HTTP/private permissions are derived
+server-side for this LAN transport. Both invitation destinations are validated;
+DNS validation checks every result, and each outgoing request pins a validated
+address and refuses redirects and prohibited metadata/link-local ranges.
+This policy never bypasses owner CSRF or peer request/response HMAC checks.
 Claim delivery is durable. No domain activity is authorized until a valid SF-owner
 acceptance matches the complete locally persisted claim binding.
+
+Activation, including same-source re-pairing, queues CURRENT initialization with
+`include_history:false`: openGym exercises, no past workouts or personal media;
+the SF side supplies current body/goal/definitions and dated hints. Full history
+is queued only by an explicitly confirmed owner action or an authenticated peer
+history request. The permanent scope/history/capability displays and network
+switches are absent from settings; the confirmed history action remains.
+
+Owner full queue requests check all pending snapshot controls (including delayed jobs)
+and open incoming snapshots inside the same SQLite transaction as queue creation.
+Owner requests return `409 snapshot_in_progress`, not a paused conflict. Incoming
+authenticated peer requests instead coalesce onto a pending snapshot whose resource
+coverage satisfies the request, including when begin is already delivered. A full
+request never coalesces onto current-only work: its single full export is queued
+behind that work using the existing delivery order. An open incoming snapshot does
+not block the opposite-direction peer response. This avoids signed busy 409 errors
+that existing senders treat as terminal. Exact authenticated request-ID retries
+replay their durable receipt without generating another snapshot. A second
+incoming begin is rejected while another snapshot is open; exact begin replay is
+idempotent. No schema migration or process-local lock is required. After completion,
+a later explicit full snapshot is allowed. Existing source/entity keys, revisions,
+membership and media request/hash identities continue to make replay safe.
 
 Activation archives local body fields in `native_body_archive` and removes those
 fields from the synced profile in the same native transaction. The separate native
@@ -94,7 +122,8 @@ Post-watermark deltas and unrelated manual, Hevy and watch records are outside t
 deletion boundary. Source rewind is a visible paused conflict.
 
 Fresh same-owner re-pairing adopts the existing source namespace atomically and retires
-the previous binding. Old unacknowledged work remains until the replacement's full
+the previous binding. Current initialization cannot retire its old pending work.
+Old unacknowledged work remains until the replacement's explicitly requested full
 snapshot has a verified completion acknowledgement. Different peer owners cannot
 adopt existing history.
 
@@ -118,7 +147,7 @@ node scripts/build-api-docs.mjs --check
 ```
 
 `sparkygym-network.test.js` uses fresh loopback fixture servers, independent explicit
-HTTP/private opt-ins and an in-memory database. It never opens current test or
+LAN backend origins distinct from public ORIGIN and an in-memory database. It never opens current test or
 production data. Full API/MCP validation, joint SF fixtures, phone acceptance and
 release approval remain separate acceptance gates.
 # Dated Training Hints
