@@ -115,8 +115,32 @@ test('schedule-only re-pair retains hint history and shared head until a confirm
   assert.throws(() => store.receiveIncoming('owner', event(next, 6)), /source_rewind/)
   store.receiveIncoming('owner', event(next, 8))
   assert.throws(() => store.purgeBody('owner', id, true), /source_still_connected/)
-  store.confirmReplacementSnapshot('owner', next, store.getConnection('owner', next).replacement_snapshot_id)
+  assert.equal(store.getConnection('owner', next).replacement_snapshot_id, null)
+  store.confirmReplacementSnapshot('owner', next, null)
+  store.confirmReplacementSnapshot('owner', next, 'wrong')
+  assert.deepEqual(store.getConnection('owner', id).sealed_keys, sealed)
+  let currentSnapshots = 0
+  while (store.pendingControls().length) for (const job of store.pendingControls()) {
+    if (job.path.endsWith('/snapshot')) {
+      const packet = JSON.parse(job.body)
+      if (packet.connection_id === next && packet.action === 'begin') {
+        currentSnapshots++
+        assert.deepEqual(packet.prune_resources, [])
+        store.confirmReplacementSnapshot('owner', next, packet.snapshot_id)
+        assert.deepEqual(store.getConnection('owner', id).sealed_keys, sealed)
+      }
+      if (packet.connection_id === next && packet.action === 'request') assert.equal(packet.include_history, false)
+    }
+    store.finishControl(job.request_id, 'delivered')
+  }
+  assert.equal(currentSnapshots, 1)
+  const full = store.queueNativeSnapshot('owner', next, true)
+  assert.equal(store.getConnection('owner', next).replacement_snapshot_id, full.snapshot_id)
+  assert.deepEqual(store.getConnection('owner', id).sealed_keys, sealed)
+  store.confirmReplacementSnapshot('owner', next, full.snapshot_id)
   assert.equal(store.getConnection('owner', id).sealed_keys, null)
+  assert.equal(store.getTrainingHints('owner').hints.length, 1)
+  assert.throws(() => store.receiveIncoming('owner', event(next, 7)), /source_rewind/)
 })
 test('purge retains each SF identity head across detach, another source, re-pair and both incoming domains', t => {
   const { store, id } = setup(t, ['schedule_summary', 'body_measurement'])
