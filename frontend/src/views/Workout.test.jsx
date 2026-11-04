@@ -226,14 +226,11 @@ async function pressProgression(index = 0) {
   return button
 }
 
-// Discard lives in the Finish sheet only (#751); the header's ⌄ only leaves the screen.
+// The footer requests the same confirmation as the Finish sheet.
 async function requestDiscard() {
-  const button = container.querySelector('.whdr-finish')
+  const button = container.querySelector('.workout-footer button[aria-label="Discard workout"]')
   expect(button).toBeTruthy()
   await act(async () => { button.dispatchEvent(new dom.Event('click', { bubbles: true })) })
-  const { onDiscard } = finishWorkoutSheet.mock.calls.at(-1)[0]
-  expect(onDiscard).toBeTypeOf('function')
-  await act(async () => { onDiscard() })
 }
 
 async function rerender() {
@@ -580,7 +577,7 @@ describe('Workout set completion flow', () => {
     expect(mocks.startRest).toHaveBeenCalledWith(90, expect.any(Number), { forSet: expect.any(Number) })
   })
 
-  it('shows workout completion only when no unfinished unit remains', async () => {
+  it('does not prompt to finish when no unfinished unit remains', async () => {
     await mount([
       exercise('already-done', [true], { asked: true }),
       exercise('final-hold', [false], { asked: true, target: { mode: 'time', sec: 30, weight: 0 } }),
@@ -588,7 +585,8 @@ describe('Workout set completion flow', () => {
 
     await toggleSet(0)
 
-    expect(mocks.workoutCompleteSheet).toHaveBeenCalledOnce()
+    expect(mocks.workoutCompleteSheet).not.toHaveBeenCalled()
+    expect(finishWorkoutSheet).not.toHaveBeenCalled()
     expect(mocks.S.active.cur).toBe(1)
     expect(mocks.startRest).not.toHaveBeenCalled()
   })
@@ -2597,13 +2595,13 @@ describe('collapsing completed workout exercises', () => {
     expect(units()[0].querySelector('.wl-summary')).toBeTruthy()
   })
 
-  it('stays on the last exercise when nothing is left, and offers the finish', async () => {
+  it('stays on the last exercise when nothing is left without prompting to finish', async () => {
     await mount([exercise('bench', [true]), exercise('row', [false])], 1,
       { active: { workoutView: 'list', collapseCompleted: true } })
     await toggleSet(0)   // the bench is folded already, so the row's set is the only tick on screen
     await rerender()
     expect(mocks.S.active.cur).toBe(1)
-    expect(mocks.workoutCompleteSheet).toHaveBeenCalledOnce()
+    expect(mocks.workoutCompleteSheet).not.toHaveBeenCalled()
     expect(units()[1].querySelector('.wl-summary')).toBeNull()
   })
 
@@ -3470,7 +3468,7 @@ describe('mark all sets done while logging a past workout', () => {
   }
   const labels = menu => menuItemsOf(menu).map(it => it.label)
 
-  it('ticks every set, stamps the top weight and offers the finish', async () => {
+  it('ticks every set and stamps the top weight without prompting to finish', async () => {
     await mount([
       exercise('plain-bench', [false, true]),
       exercise('plain-row', [false], { sets: [{ w: 40, r: 8, done: false, phase: 'warmup' }, { w: 70, r: 8, done: false }] }),
@@ -3481,7 +3479,8 @@ describe('mark all sets done while logging a past workout', () => {
     await act(async () => { menu.sections[1].items.filter(Boolean)[0].onClick() })
     expect(mocks.S.active.entries.every(e => e.sets.every(s => s.done))).toBe(true)
     expect(mocks.S.active.entries.map(e => e.topW)).toEqual([60, 70])
-    expect(mocks.workoutCompleteSheet).toHaveBeenCalledTimes(1)
+    expect(mocks.workoutCompleteSheet).not.toHaveBeenCalled()
+    expect(finishWorkoutSheet).not.toHaveBeenCalled()
   })
 
   it('is only there for a past workout', async () => {
@@ -3593,6 +3592,31 @@ describe('the workout screen chrome (v1.3.11)', () => {
   const item = label => menuItemsOf(lastMenu()).find(it => it.label === label)
   const click = async el => { await act(async () => { el.dispatchEvent(new dom.Event('click', { bubbles: true })) }) }
   const openMore = () => click(container.querySelector('button[aria-label="More"]'))
+
+  it.each([false, true])('keeps only options and confirmed discard in the active footer (all done: %s)', async done => {
+    await mount([exercise('plain-bench', [done])])
+    const footer = container.querySelector('.workout-footer')
+    expect(footer).toBeTruthy()
+    const buttons = [...footer.querySelectorAll('button')]
+    expect(buttons.map(b => b.getAttribute('aria-label'))).toEqual(['Workout settings', 'Discard workout'])
+    expect(buttons[0].getAttribute('title')).toBe('Workout settings')
+    expect([...container.querySelectorAll('button')].filter(b => /Finish/.test(b.textContent)).map(b => b.textContent)).toEqual(['Finish'])
+    await click(buttons[0])
+    expect(mocks.workoutSettingsSheet).toHaveBeenCalledOnce()
+    await click(buttons[1])
+    expect(mocks.confirmSheet.mock.calls.at(-1)[0]).toMatchObject({ title: 'Discard workout?', danger: true })
+    expect(mocks.S.active).not.toBeNull()
+    expect(finishWorkout).not.toHaveBeenCalled()
+    expect(finishWorkoutSheet).not.toHaveBeenCalled()
+  })
+
+  it('keeps the footer Save changes action and hides discard while editing history', async () => {
+    await mount([exercise('plain-bench', [true])], 0, { active: { editingWorkoutId: 'saved' } })
+    expect(container.querySelector('.workout-footer')).toBeNull()
+    const save = [...container.querySelectorAll('button')].find(b => b.textContent === 'Save changes')
+    await click(save)
+    expect(finishWorkout).toHaveBeenCalledOnce()
+  })
 
   it('has a labelled Finish pill and a ⌄ that leaves the screen with the session still running', async () => {
     await mount([exercise('plain-bench', [false])])
