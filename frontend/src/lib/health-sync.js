@@ -21,6 +21,8 @@
 import { mergeHeartRate, mergeWeighIns, lacksHeartRate } from './health-read.js'
 import { MOBILE, nativePlatform, readJsonFile, writeJsonFile } from './mobile.js'
 import { healthRecords, planSync, writtenIds, goneIds } from './health-connect.js'
+import { isOn } from './modules.js'
+import { bodyReadOnly } from './sparkygym-client.js'
 import { exerciseNameFor } from './i18n-core.js'
 import { EXIDX } from './exercises.js'
 import { speedUnitOf } from './speed.js'
@@ -93,6 +95,9 @@ export function syncHealth(S) {
   // Not read yet: initHealthSync reads it at launch and syncs then, which covers a save made
   // before that; the save path itself never waits on the file.
   if (!cached || !cached.on) return Promise.resolve(cached)
+  // Settings → Modules: Health off pauses the sync. Nothing is disconnected; switched back on, the
+  // next save writes everything that changed meanwhile (planSync compares with what was written).
+  if (S && !isOn(S, 'health')) return Promise.resolve(cached)
   if (running) { again = S; return running }
   again = null
   running = (async () => {
@@ -287,6 +292,7 @@ export async function disableRead(kind) {
  */
 export function readHealth(getState, { force = false, now = Date.now(), apply = null } = {}) {
   if (!MOBILE || !cached || !(cached.readHr || cached.readWeight)) return Promise.resolve(cached)
+  if (!isOn(getState?.(), 'health')) return Promise.resolve(cached)   // paused with the Health module
   if (readRunning) return readRunning
   readRunning = readOnce(getState, force, now, apply || applyRef).finally(() => { readRunning = null })
   return readRunning
@@ -327,7 +333,7 @@ async function readOnce(getState, force, now, applyFn) {
     h.hrTried = tried
   }
 
-  if (h.readWeight && (force ? now - lastWeightRead >= RESUME_EVERY_MS : now - lastWeightRead >= READ_EVERY_MS)) {
+  if (!bodyReadOnly() && h.readWeight && (force ? now - lastWeightRead >= RESUME_EVERY_MS : now - lastWeightRead >= READ_EVERY_MS)) {
     const sinceFor = back => (h.wCursor > 0 ? Math.max(h.wCursor - WEIGHT_MARGIN_MS, now - back) : now - back)
     try {
       let res
@@ -344,7 +350,7 @@ async function readOnce(getState, force, now, applyFn) {
       // The memo is filled in on the copy that decides; the store's update replays the same merge.
       const seen = { ...(h.seen || {}) }
       const before = { ...seen }
-      if (records.length) apply(probe => mergeWeighIns(probe, records, { src, seen }).length > 0,
+      if (!bodyReadOnly() && records.length) apply(probe => mergeWeighIns(probe, records, { src, seen }).length > 0,
         s => { mergeWeighIns(s, records, { src, seen: { ...before } }) })
       for (const [d, v] of Object.entries(seen)) if (now - Number(v?.t) > SEEN_KEEP_MS) delete seen[d]
       h.seen = seen

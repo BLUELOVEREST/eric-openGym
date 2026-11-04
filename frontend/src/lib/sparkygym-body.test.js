@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { bodyView, bodyWriteState, validateBodyProfile } from './sparkygym-body.js'
 import { measurementValue, measurementSeries } from './measurements.js'
+import { readingsOf, settleAll } from './weigh-ins.js'
 
 const model = { managed: true, source: 'sparkyfitness', connection_id: 'c1', revision: 2,
   definitions: [{ metric_id: 'biceps_left', label: 'Left biceps', value_type: 'length', unit: 'cm', enabled: true, builtin: true }],
@@ -10,6 +11,18 @@ const model = { managed: true, source: 'sparkyfitness', connection_id: 'c1', rev
   ], target: { metric_id: 'target_weight', value: 75, unit: 'kg', effective_date: null } }
 
 describe('SparkyFitness body read model', () => {
+  it.each(['first', 'avg', 'last'])('preserves the authoritative SF daily value through the multi-reading codec (%s)', bwDaily => {
+    const source = { ...model, measurements: [
+      { ...model.measurements[0], entity_id: 'morning', measured_at: '2026-10-28T07:00:00Z', value: 79 },
+      { ...model.measurements[0], entity_id: 'evening', measured_at: '2026-10-28T21:00:00Z', value: 81 },
+    ] }
+    const out = bodyView({ unit: 'kg', bwDaily }, source)
+    expect(out.bodyweight).toEqual([{ id: 'evening', d: '2026-10-28', w: 81 }])
+    expect(readingsOf(out.bodyweight[0])).toEqual([{ id: '0', at: null, w: 81, t: 0 }])
+    settleAll(out)
+    expect(out.bodyweight[0].w).toBe(81)
+    expect(out.bodyweight[0]).not.toHaveProperty('ins')
+  })
   it('derives a unit-aware display without writing external data into the profile', () => {
     const local = { unit: 'lb', targetW: 1, bodyweight: [], measurements: [], workouts: [{ id: 'w' }] }
     const out = bodyView(local, model)

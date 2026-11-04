@@ -28,6 +28,19 @@ it('omits managed body keys on native profile writes and keeps the training doma
   expect(sent.routines[0].name).toBe('Training')
   for (const key of ['bodyweight', 'measurements', 'customMeasurements', 'measurementEnabled', 'targetW']) expect(sent).not.toHaveProperty(key)
 })
+it('keeps managed ownership and native workout sync with generic Integrations disabled', async () => {
+  useStore.getState().update(state => {
+    state.modules = { ...state.modules, integrations: false, body: false }
+    state.workouts = [{ id: 'independent-one', d: '2026-10-29', entries: [] }, { id: 'independent-two', d: '2026-10-29', entries: [] }]
+    state.bodyweight = [{ d: '2026-10-29', w: 1, ins: [{ id: 'watch', at: '10:00', w: 1 }] }]
+  }, false)
+  await useStore.getState().pushState()
+  const sent = JSON.parse(api.mock.calls.find(([, init]) => init?.method === 'PUT')[1].body).state
+  expect(sent.workouts.map(w => w.id)).toEqual(['independent-one', 'independent-two'])
+  expect(sent).not.toHaveProperty('bodyweight')
+  expect(readBodyState(useStore.getState().S).bodyweight[0].w).toBe(80)
+  expect(useSparkyGym.getState().body).toBe(source)
+})
 it('keeps external body history across reset and backup import without exporting credentials', async () => {
   await useStore.getState().resetEverything()
   useStore.getState().importBackup({ ...structuredClone(DEF), targetW: 1, bodyweight: [{ d: '2026-10-29', w: 1 }] })

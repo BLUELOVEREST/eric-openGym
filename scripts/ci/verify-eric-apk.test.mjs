@@ -11,3 +11,16 @@ test('wrong package, version, ABI, debug and rotated certificates cannot publish
   assert.throws(() => verifyApkMetadata(badging, cert, release, 'b'.repeat(64)))
   assert.throws(() => verifyApkMetadata(badging, cert + cert, release, 'a'.repeat(64)))
 })
+const watchBadging = badging.replace('100000002', '100010002').replace("native-code: 'arm64-v8a'\n", '')
+test('Wear OS accepts no native libraries and requires its offset and persistent certificate', () => {
+  assert.doesNotThrow(() => verifyApkMetadata(watchBadging, cert, release, 'a'.repeat(64), 'wear'))
+  assert.doesNotThrow(() => verifyApkMetadata(watchBadging + "native-code: 'armeabi-v7a'\n", cert, release, 'a'.repeat(64), 'wear'))
+  assert.throws(() => verifyApkMetadata(badging.replace("native-code: 'arm64-v8a'\n", ''), cert, release, 'a'.repeat(64)))
+  assert.throws(() => verifyApkMetadata(watchBadging, cert, { ...release, versionCode: 2100000000 }, 'a'.repeat(64), 'wear'))
+  for (const value of [watchBadging.replace('100010002', '100000002'), watchBadging.replace('ch.duartesantos.opengym', 'ch.other'), watchBadging.replace('1.4.3-eric.2', '1.4.3'), watchBadging + 'application-debuggable\n']) {
+    assert.throws(() => verifyApkMetadata(value, cert, release, 'a'.repeat(64), 'wear'))
+  }
+  assert.throws(() => verifyApkMetadata(watchBadging, cert, release, 'b'.repeat(64), 'wear'))
+  assert.throws(() => verifyApkMetadata(watchBadging, cert + cert, release, 'a'.repeat(64), 'wear'))
+  assert.throws(() => verifyApkMetadata(badging, cert, release, 'a'.repeat(64), 'unknown'))
+})

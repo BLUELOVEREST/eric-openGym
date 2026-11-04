@@ -74,12 +74,12 @@ jobs:
           cd frontend
           npx cap sync android
           node scripts/check-mobile-bundle.mjs
-      - name: Build unsigned ARM64 release
+      - name: Build unsigned ARM64 phone and Wear OS releases
         run: |
           set -euo pipefail
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36' 'build-tools;36.0.0'
           cd frontend/android
-          ./gradlew --no-daemon testSideloadReleaseUnitTest assembleSideloadRelease "-PericReleaseTag=$RELEASE_TAG"
+          ./gradlew --no-daemon :app:testSideloadReleaseUnitTest :app:assembleSideloadRelease :wear:testReleaseUnitTest :wear:assembleRelease "-PericReleaseTag=$RELEASE_TAG"
       - name: Sign and verify APK
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -100,9 +100,21 @@ jobs:
           "$BT/zipalign" -c -P 16 4 "release-apk/$APK_NAME"
           "$BT/aapt" dump badging "release-apk/$APK_NAME" > "$RUNNER_TEMP/badging.txt"
           node scripts/ci/verify-eric-apk.mjs "$RUNNER_TEMP/badging.txt" release-apk/signing-certificate.txt
+          WEAR_NAME="openGym-$VERSION_NAME-wearos.apk"
+          "$BT/zipalign" -P 16 -f 4 frontend/android/wear/build/outputs/apk/release/wear-release-unsigned.apk "$RUNNER_TEMP/wear-aligned.apk"
+          "$BT/apksigner" sign --ks "$RUNNER_TEMP/eric-opengym.p12" --ks-pass env:ANDROID_STORE_PASSWORD --key-pass env:ANDROID_KEY_PASSWORD --ks-key-alias "$ANDROID_KEY_ALIAS" --out "release-apk/$WEAR_NAME" "$RUNNER_TEMP/wear-aligned.apk"
+          "$BT/apksigner" verify --verbose --print-certs "release-apk/$WEAR_NAME" > release-apk/wear-signing-certificate.txt
+          "$BT/zipalign" -c -P 16 4 "release-apk/$WEAR_NAME"
+          "$BT/aapt" dump badging "release-apk/$WEAR_NAME" > "$RUNNER_TEMP/wear-badging.txt"
+          node scripts/ci/verify-eric-apk.mjs "$RUNNER_TEMP/wear-badging.txt" release-apk/wear-signing-certificate.txt wear
+          PHONE_CERT=$(awk '/Signer #1 certificate SHA-256 digest:/ {print $NF}' release-apk/signing-certificate.txt)
+          WEAR_CERT=$(awk '/Signer #1 certificate SHA-256 digest:/ {print $NF}' release-apk/wear-signing-certificate.txt)
+          test -n "$PHONE_CERT"
+          test "$PHONE_CERT" = "$WEAR_CERT"
           cd release-apk
           sha256sum "$APK_NAME" > "$APK_NAME.sha256"
-          cp "$APK_NAME.sha256" SHA256SUMS
+          sha256sum "$WEAR_NAME" > "$WEAR_NAME.sha256"
+          cat "$APK_NAME.sha256" "$WEAR_NAME.sha256" > SHA256SUMS
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: openGym-${{ env.VERSION_NAME }}-arm64-release
@@ -111,6 +123,7 @@ jobs:
             release-apk/*.sha256
             release-apk/SHA256SUMS
             release-apk/signing-certificate.txt
+            release-apk/wear-signing-certificate.txt
           if-no-files-found: error
           retention-days: 30
       - name: Publish verified APK
@@ -124,5 +137,5 @@ jobs:
           else
             gh release create "$RELEASE_TAG" --verify-tag --draft --title "openGym $VERSION_NAME" --notes 'Custom ARM64 Release APK with 180 px repository media. Uses the original package ID with a custom signing key: back up and uninstall the official app before first installation. Later custom versions update in place. Corresponding source and build instructions are in this tagged repository; see LICENSE, NOTICE.md and docs/ERIC_APK_RELEASES.md.'
           fi
-          gh release upload "$RELEASE_TAG" "release-apk/$APK_NAME" "release-apk/$APK_NAME.sha256" release-apk/SHA256SUMS release-apk/signing-certificate.txt
+          gh release upload "$RELEASE_TAG" release-apk/*.apk release-apk/*.sha256 release-apk/SHA256SUMS release-apk/signing-certificate.txt release-apk/wear-signing-certificate.txt
           gh release edit "$RELEASE_TAG" --draft=false --latest

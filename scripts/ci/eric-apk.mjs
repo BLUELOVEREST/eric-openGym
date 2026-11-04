@@ -4,6 +4,7 @@ import { ericRelease } from '../../frontend/src/lib/release-version.js'
 
 const pkg = JSON.parse(readFileSync('frontend/package.json', 'utf8'))
 const release = ericRelease(process.argv[2], pkg.version)
+if (release.versionCode + 10000 > 2100000000) throw new Error('Eric Wear versionCode overflow')
 if (process.env.GITHUB_REPOSITORY !== 'BLUELOVEREST/eric-openGym') throw new Error('Wrong build repository')
 const git = args => execFileSync('git', args, { encoding: 'utf8' }).trim()
 if (git(['rev-parse', 'HEAD']) !== git(['rev-parse', `${release.tag}^{commit}`])) throw new Error('Checkout is not the requested immutable tag')

@@ -22,7 +22,15 @@ Native versionName is `X.Y.Z-eric.N`; versionCode is `100000000 + N` (N is the
 independent openGym global counter). Increment N across upstream upgrades, never
 reuse a published tag or regenerate the signing key to fix a build failure.
 
-Only `assembleSideloadRelease`, ARM64, Standard 180 px repository media is built.
+The phone uses `:app:testSideloadReleaseUnitTest` and `:app:assembleSideloadRelease`,
+ARM64, Standard 180 px repository media. Explicit module and flavor names avoid
+ambiguity with the Play and F-Droid variants. The phone output is
+`app/build/outputs/apk/sideload/release/app-sideload-release-unsigned.apk`.
+Wear OS uses `:wear:testReleaseUnitTest` and `:wear:assembleRelease`; its output is
+`wear/build/outputs/apk/release/wear-release-unsigned.apk`. The watch has no channel
+flavors. Both tasks receive the same `-PericReleaseTag` property. The watch retains
+the phone package ID and versionName, with versionCode `100000000 + N + 10000`.
+Release validation rejects counters above 1999989999 to leave room for that offset.
 Plus/HD private media and Play packs never enter CI. LICENSE and media NOTICE stay
 in the corresponding source and staged app assets. This is a personal/custom
 release, not an official or store build. Existing upstream build scripts remain
@@ -51,22 +59,29 @@ key on every run. Losing the key prevents future in-place updates.
 The runner decrypts the signing file only during the signing step and removes it
 on exit. Passwords are environment references, not command-line values. APK
 verification checks signature, fixed certificate, package ID, versionName,
-versionCode, ARM64-only native code and absence of the debuggable flag.
+versionCode and absence of the debuggable flag for both packages. The phone must
+contain ARM64-only native code; the watch need not contain native libraries.
+Both are signed with the existing persistent phone key, never a newly generated
+watch key. Each certificate is checked against `ANDROID_CERT_SHA256`, and the
+phone and watch certificates must match for the Wearable Data Layer to link them.
 Alignment uses SDK Build Tools' `zipalign -P 16` before signing and verifies the
 signed archive without modifying it, following the
 [Android tooling reference](https://developer.android.com/tools/zipalign).
 
 ## Output And Publication
 
-An Actions artifact contains `openGym-X.Y.Z-eric.N-arm64.apk`, its `.apk.sha256`,
-SHA256SUMS and public signing-certificate.txt. Successful builds create a draft
+An Actions artifact contains `openGym-X.Y.Z-eric.N-arm64.apk` and
+`openGym-X.Y.Z-eric.N-wearos.apk`, each one's `.apk.sha256`, SHA256SUMS, and public
+`signing-certificate.txt` / `wear-signing-certificate.txt`. Install the phone APK
+on the phone and the Wear OS APK separately on the watch; the phone APK does not
+embed the watch app. Successful builds create a draft
 release, upload verified assets, then publish it as latest. Published releases
 are never overwritten. If an upload interrupts a draft, inspect/remove its
 incomplete assets before retrying; the workflow refuses conflicting asset names
 rather than silently replacing them. A failed build is not a completed release.
 
-The initial workflow release is v1.4.3-eric.2 because eric.1 was already published
-to Gitea before this workflow existed. This task pushes the new tag only to
-GitHub; it does not trigger another container build or deploy either service.
+The initial workflow release was v1.4.3-eric.2 because eric.1 was already published
+to Gitea before this workflow existed. APK publication on GitHub does not deploy
+either service.
 Real phone backup/restore, installation and offline/reconnect remain post-build
 acceptance steps, not results inferred from a successful compilation.

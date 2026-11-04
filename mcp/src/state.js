@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { openProfileReader } from '../../api/storage/profile-reader.js'
 import { composeBodyState } from '../../api/integrations/sparkygym-body-model.js'
+import { applyExerciseMerges } from '../../frontend/src/lib/exercise-merge.js'
 
 const DATA_DIR = process.env.OPENGYM_DATA || path.join(process.cwd(), 'data')
 const DATA_SET = !!process.env.OPENGYM_DATA
@@ -60,7 +61,7 @@ export function getState() {
     const stamp = JSON.stringify([revision, body.revision, body.managed, body.connection_id])
     if (_state === undefined || stamp !== _revision) {
       const profile = _reader.getProfile(_uid)
-      _state = profile ? composeBodyState(Object.assign({}, defaultsShape(), profile.state), body) : null
+      _state = profile ? composeBodyState(shaped(profile.state), body) : null
       _revision = JSON.stringify([profile?.revision ?? null, body.revision, body.managed, body.connection_id])
     }
     return _state
@@ -93,6 +94,15 @@ export function _seedStateForTests(state) {
   _db = { users: [{ id: _uid, name: 'Test', created: '2026-07-26T00:00:00.000Z' }] }
   _state = state
   _seeded = true
+}
+
+// A stored profile as the tools read it: the app's defaults under it, and an exercise merged into
+// another in the app (#656, lib/exercise-merge.js) read as the one it went into wherever a copy
+// still names it, the way the app's own copies are brought in line when they meet.
+function shaped(stored) {
+  const st = Object.assign({}, defaultsShape(), stored)
+  try { applyExerciseMerges(st) } catch { /* the copy as stored, then */ }
+  return st
 }
 
 function defaultsShape() {

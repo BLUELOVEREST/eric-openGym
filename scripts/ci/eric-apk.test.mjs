@@ -6,6 +6,18 @@ import test from 'node:test'
 const { load } = createRequire(import.meta.url)('js-yaml')
 const workflow = load(readFileSync(new URL('../../.github/workflows/eric-apk.yml', import.meta.url), 'utf8'))
 const job = workflow.jobs.apk
+test('Wear OS builds and is verified against the same release certificate', () => {
+  const commands = job.steps.map(step => step.run || '').join('\n')
+  assert.match(commands, /:wear:testReleaseUnitTest/)
+  assert.match(commands, /:wear:assembleRelease/)
+  assert.match(commands, /wear-signing-certificate\.txt/)
+  assert.match(commands, /WEAR_CERT/)
+  assert.match(commands, /PHONE_CERT/)
+  assert.match(commands, /verify-eric-apk\.mjs "\$RUNNER_TEMP\/wear-badging\.txt" release-apk\/wear-signing-certificate\.txt wear/)
+  assert.match(commands, /:app:testSideloadReleaseUnitTest :app:assembleSideloadRelease :wear:testReleaseUnitTest :wear:assembleRelease/)
+  assert.doesNotMatch(commands, /:app:(?:assembleRelease|testReleaseUnitTest)\b/)
+  assert.match(commands, /app\/build\/outputs\/apk\/sideload\/release\/app-sideload-release-unsigned\.apk/)
+})
 test('only the approved fork builds custom tags with bounded publication permissions', () => {
   assert.equal(job.if, "github.repository == 'BLUELOVEREST/eric-openGym'")
   assert.deepEqual(workflow.on.push.tags, ['v*-eric.*'])

@@ -1,6 +1,6 @@
 # Eric openGym Fork Guide
 
-Last updated: 2026-10-30.
+Last updated: 2026-11-04.
 
 Read `CLAUDE.md` for upstream architecture, commands, translations and media rules.
 This guide supplements those rules for the SparkyFitness integration.
@@ -22,6 +22,17 @@ This guide supplements those rules for the SparkyFitness integration.
 - No assistant attribution in commits, trailers or release descriptions.
 
 ## Integration Boundary
+
+- v1.4.4 upgrade work is isolated in `/tmp/opengym-merge-v1.4.4` on
+  `codex/merge-upstream-v1.4.4`. See `docs/integrations/upstream-v1.4.4-merge-plan.md`
+  for scope and validation evidence. Do not mistake this uncommitted merge for a
+  published release. New modules, multi-weigh-in editors, watch events, widgets and
+  bodyweight-volume calculations must retain SparkyFitness body ownership. New
+  upstream webhooks do not replace the existing SparkyGym transport.
+- Wear OS is an optional separate companion APK, not a direct service connection.
+  Phone and watch require the same application ID and stable custom certificate;
+  preserve the existing phone signing identity. Do not build or publish artifacts
+  or change services merely to validate source changes.
 
 - Native `week[weekday]` remains routine-ID assignments; combined routines and
   independent freestyle workouts use upstream behavior. SF owns dated weekly intent.

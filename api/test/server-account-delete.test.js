@@ -49,16 +49,27 @@ async function startServer(t, { users: which = ['admin', 'user'], env = {} } = {
   for (const uid of which.map(k => all[k].id).filter(id => id === USER || id === ADMIN)) {
     fs.writeFileSync(path.join(dataDir, `state-${uid}.json`), JSON.stringify({ unit: 'kg', workouts: [], _rev: 3 }));
   }
-  const child = spawn(process.execPath, ['server.js'], {
+  let child;
+  const launch = () => spawn(process.execPath, ['server.js'], {
     cwd: API, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, PORT: '0', DATA_DIR: dataDir, ORIGIN: 'http://localhost:8080', RP_ID: 'localhost', PASSWORD_LOGIN: '1', AUDIT_LOG: '1', ...env },
   });
   const h = { api: '', log: '', dataDir };
-  child.stdout.on('data', d => h.log += d);
-  child.stderr.on('data', d => h.log += d);
+  h.restart = async () => {
+    if (child) {
+      const exited = new Promise(resolve => child.once('exit', resolve));
+      child.kill('SIGKILL');
+      await exited;
+    }
+    child = launch();
+    h.log = '';
+    child.stdout.on('data', d => h.log += d);
+    child.stderr.on('data', d => h.log += d);
+    h.port = await boundPort(child, () => h.log);
+    h.api = `http://127.0.0.1:${h.port}`;
+  };
   t.after(() => { child.kill('SIGKILL'); fs.rmSync(dataDir, { recursive: true, force: true }); });
-  h.port = await boundPort(child, () => h.log);
-  h.api = `http://127.0.0.1:${h.port}`;
+  await h.restart();
   h.del = async (uid, body) => {
     const r = await fetch(`${h.api}/api/account/delete`, { method: 'POST', headers: as(uid), body: JSON.stringify(body) });
     return { status: r.status, body: await r.json(), cookie: r.headers.get('set-cookie') || '' };
@@ -67,6 +78,35 @@ async function startServer(t, { users: which = ['admin', 'user'], env = {} } = {
   h.audit = () => fs.readFileSync(path.join(h.dataDir, 'audit.log'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
   h.stackFrames = () => h.log.split('\n').filter(l => /^\s+at /.test(l)).length;
   return h;
+}
+
+for (const blocked of ['watch', 'connections', 'outbox']) {
+  test(`failed ${blocked} cleanup retains deletion intent and startup completes it with providers off`, async t => {
+    const h = await startServer(t);
+    const integrations = path.join(h.dataDir, 'integrations');
+    fs.mkdirSync(integrations, { recursive: true });
+    const watch = path.join(h.dataDir, `watch-${USER}.json`);
+    const connections = path.join(integrations, `u-${USER}.json`);
+    const outbox = path.join(integrations, 'outbox.json');
+    fs.writeFileSync(watch, '{"snapshot":"private"}');
+    fs.writeFileSync(connections, '{"connections":[]}');
+    fs.writeFileSync(outbox, JSON.stringify({ jobs: [{ id: 'e', key: `webhook:${USER}:c:workout.finished:w`, uid: USER, payload: { private: true } }], failed: [], done: {} }));
+    const blocker = { watch, connections, outbox }[blocked];
+    fs.unlinkSync(blocker);
+    fs.mkdirSync(blocker);
+    const res = await h.del(USER, { name: 'Mallory', current: GOOD });
+    assert.equal(res.status, 500);
+    assert.equal(h.db().users.find(u => u.id === USER)?.deletePending, true);
+    assert.equal((await fetch(`${h.api}/api/me`, { headers: as(USER) })).status, 401);
+    fs.rmdirSync(blocker);
+    await h.restart();
+    assert.equal(h.db().users.some(u => u.id === USER), false);
+    assert.equal(fs.existsSync(watch), false);
+    assert.equal(fs.existsSync(connections), false);
+    assert.deepEqual(JSON.parse(fs.readFileSync(outbox)).jobs, []);
+    assert.equal(readProfile(h.dataDir, USER), undefined);
+    assert.ok(readProfile(h.dataDir, ADMIN));
+  });
 }
 
 test('removes the account and everything attached to it, and ends the session', async t => {
